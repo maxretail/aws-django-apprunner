@@ -1,0 +1,10 @@
+{
+    "app": "python app.py",
+    "context": {
+        "@aws-cdk/aws-rds:databaseInstanceEngine": "postgres",
+        "@aws-cdk/aws-rds:databaseInstanceEngineVersion": "15",
+        "@aws-cdk/aws-rds:databaseInstanceType": "t3.micro",
+        "@aws-cdk/aws-apprunner:serviceCpu": "1024",
+        "@aws-cdk/aws-apprunner:serviceMemory": "2048"
+    }
+} 

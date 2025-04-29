@@ -1,0 +1,69 @@
+name: Deploy to AWS App Runner
+
+on:
+  push:
+    branches: [ main, staging ]
+  workflow_dispatch:
+
+env:
+  AWS_REGION: ${{ secrets.AWS_REGION || 'us-east-1' }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Read APPCONFIG.env and set APP_NAME
+        id: appconfig
+        run: |
+          BASE_APP_NAME=$(grep '^APP_NAME=' APPCONFIG.env | cut -d '=' -f2)
+          if [ "$GITHUB_REF" = "refs/heads/staging" ]; then
+            APP_NAME="${BASE_APP_NAME}_staging"
+          else
+            APP_NAME="${BASE_APP_NAME}"
+          fi
+          echo "APP_NAME=$APP_NAME" >> $GITHUB_ENV
+          echo "APP_NAME=$APP_NAME" >> $GITHUB_OUTPUT
+
+      - name: Get AWS Account ID
+        id: aws-account
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          echo "ACCOUNT_ID=$ACCOUNT_ID" >> $GITHUB_ENV
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
+
+      - name: Build, tag, and push image to Amazon ECR
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: ${{ env.APP_NAME }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          echo "::set-output name=image::$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+
+      - name: Deploy to App Runner
+        run: |
+          # Update apprunner.yaml with the new image
+          sed -i "s|\${ECR_REPO}|${{ steps.login-ecr.outputs.registry }}/${{ env.APP_NAME }}|g" apprunner.yaml
+          sed -i "s|\${IMAGE_TAG}|${{ github.sha }}|g" apprunner.yaml
+          
+          # Create or update the service
+          aws apprunner create-service --cli-input-json file://apprunner.yaml || \
+          aws apprunner update-service --service-arn arn:aws:apprunner:${{ env.AWS_REGION }}:${{ env.ACCOUNT_ID }}:service/${{ env.APP_NAME }} --source-configuration file://apprunner.yaml 
