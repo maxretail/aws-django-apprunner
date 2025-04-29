@@ -1,0 +1,30 @@
+{
+    "environment": {
+        "type": "docker",
+        "main_service": "app",
+        "command_wrappers": {
+            "django": {
+                "pattern": "python manage.py",
+                "wrapper": "docker compose exec -it app bash -c \"$CMD\"",
+                "description": "All Django management commands must be run inside the app container"
+            },
+            "django-admin": {
+                "pattern": "django-admin",
+                "wrapper": "docker compose exec -it app bash -c \"$CMD\"",
+                "description": "All Django admin commands must be run inside the app container"
+            }
+        }
+    },
+    "development": {
+        "database": {
+            "type": "postgresql",
+            "host": "db",
+            "port": 5432,
+            "managed_by": "docker-compose"
+        },
+        "django": {
+            "settings_module": "config.settings.development",
+            "runs_in_container": true
+        }
+    }
+} 

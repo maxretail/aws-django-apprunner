@@ -6,8 +6,8 @@ A template for deploying Django applications on AWS App Runner with Docker, Post
 
 1. Clone the repository:
    ```bash
-   git clone <repository-url>
-   cd imager
+   git clone https://github.com/maxretail/aws-django-apprunner <project name>
+   cd <project name>
    ```
 
 2. Open the project in VS Code or Cursor:
@@ -37,6 +37,17 @@ The devcontainer automatically configures:
 - AWS credentials (if available)
 - Development database
 - Django development server
+
+### Development Helpers
+
+The project includes `.cursor-helper.json` which provides context to Cursor's AI about the development environment. This ensures that Django commands are always run in the correct context - inside the Docker container. For example:
+
+```bash
+# When running Django commands, they will automatically be wrapped to run in the container:
+docker compose exec -it app bash -c "python manage.py check"
+```
+
+This helper ensures that commands are always run in the correct context when using Cursor's AI features.
 
 ## Project Structure
 
