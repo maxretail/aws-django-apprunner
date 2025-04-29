@@ -8,7 +8,7 @@ import asyncio
 import logging
 
 logger = logging.getLogger(__name__)
-logger.info("Views module imported")
+logger.debug("Views module imported")
 
 def test_db_connection():
     """Test if we can connect to the database."""
@@ -27,12 +27,12 @@ test_db_connection_async = sync_to_async(test_db_connection)
 @router.route('health/', methods=['GET'])
 async def health(request):
     """Health check endpoint for App Runner."""
-    logger.info("Health check called")
+    logger.debug("Health check called")
     return JsonResponse({'status': 'healthy'})
 
 @router.route('debug/', methods=['GET'])
 async def debug(request):
-    logger.info("Debug route called")
+    logger.debug("Debug route called")
     
     # Test database connection using async version
     db_healthy, db_error = await test_db_connection_async()
@@ -48,7 +48,7 @@ async def debug(request):
 
 @router.route('test/async-example/', methods=['GET'])
 async def async_example(request):
-    logger.info("Async example route called")
+    logger.debug("Async example route called")
     
     # Create three concurrent tasks that sleep for different durations
     tasks = [

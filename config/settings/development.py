@@ -42,7 +42,17 @@ LOGGING = {
             'level': 'INFO',
             'propagate': False,
         },
+        'django.urls': {
+            'handlers': ['console'],
+            'level': 'WARNING',
+            'propagate': False,
+        },
         'apps.core': {
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'config': {
             'handlers': ['console'],
             'level': 'INFO',
             'propagate': False,

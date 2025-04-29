@@ -16,18 +16,12 @@ Including another URLconf
 """
 from django.contrib import admin
 from django.urls import path, include
-import logging
 from apps.core.router import router
-
-logger = logging.getLogger(__name__)
 
 # Get URL patterns from the router
 core_urlpatterns = router.get_urlpatterns()
-logger.info(f"Core URL patterns: {core_urlpatterns}")
 
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('', include('apps.core.urls', namespace='core')),
 ]
-
-logger.info(f"Final URL patterns: {urlpatterns}")

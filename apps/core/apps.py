@@ -9,7 +9,7 @@ class CoreConfig(AppConfig):
     name = 'apps.core'
 
     def ready(self):
-        logger.error("[STARTUP] Core app initializing...")
+        logger.debug("[STARTUP] Core app initializing...")
         
         # Import views to register routes
         from . import views
@@ -18,5 +18,5 @@ class CoreConfig(AppConfig):
         # Now register the routes
         router.register_routes()
         
-        logger.error("[STARTUP] Core app ready - routes registered")
-        logger.error(f"[STARTUP] Available routes: {[str(route) for route in router.get_urlpatterns()]}")
+        logger.debug("[STARTUP] Core app ready - routes registered")
+        logger.debug(f"[STARTUP] Available routes: {[str(route) for route in router.get_urlpatterns()]}")

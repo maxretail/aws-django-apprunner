@@ -1,4 +1,4 @@
 import logging
 
 logger = logging.getLogger(__name__)
-logger.info("Core app initialized")
+logger.debug("Core app initialized")
