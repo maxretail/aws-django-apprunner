@@ -86,6 +86,23 @@ These are configured in `APPCONFIG.env` and can be overridden in your local envi
 
 The application is deployed using AWS App Runner. The deployment process is automated through GitHub Actions.
 
+### Local Deployment
+
+You can deploy the application locally if you have AWS credentials configured:
+
+1. Configure AWS credentials:
+   ```bash
+   aws configure
+   ```
+   This will prompt you for your AWS Access Key ID, Secret Access Key, region, and output format.
+
+2. Run the deployment script:
+   ```bash
+   ./scripts/deploy.sh
+   ```
+
+The deployment will create all necessary AWS resources and deploy your application to App Runner.
+
 ### GitHub Actions Deployment
 
 The repository includes a GitHub Actions workflow that automatically deploys the application when changes are pushed to the main branch. The workflow:
