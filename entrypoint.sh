@@ -33,6 +33,9 @@ if [ "$DEBUG" = "1" ]; then
     echo "Starting development server..."
     exec python manage.py runserver 0.0.0.0:8000
 else
+    echo "Collecting static files..."
+    python manage.py collectstatic --noinput
+    
     echo "Starting production server..."
     exec uvicorn config.asgi:application --host 0.0.0.0 --port 8000 \
          --workers 2 \
