@@ -19,8 +19,8 @@ class Router:
     def route(self, url_pattern, methods=None):
         def decorator(view_func):
             @wraps(view_func)
-            def _wrapped_view(request, *args, **kwargs):
-                return asyncio.run(view_func(request, *args, **kwargs))
+            async def _wrapped_view(request, *args, **kwargs):
+                return await view_func(request, *args, **kwargs)
             
             # Apply HTTP method decorator if specified
             if methods:
