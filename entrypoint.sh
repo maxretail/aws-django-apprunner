@@ -28,11 +28,15 @@ python manage.py migrate
 echo "Ensuring superuser exists..."
 python manage.py ensure_superuser
 
-# Start the ASGI server
-echo "Starting ASGI server..."
-exec gunicorn config.wsgi:application --bind 0.0.0.0:8000 \
-     --workers 2 \
-     --threads 2 \
-     --worker-class gthread \
-     --worker-tmp-dir /dev/shm \
-     --timeout 120 
+# Start the appropriate server based on environment
+if [ "$DEBUG" = "1" ]; then
+    echo "Starting development server..."
+    exec python manage.py runserver 0.0.0.0:8000
+else
+    echo "Starting production server..."
+    exec uvicorn config.asgi:application --host 0.0.0.0 --port 8000 \
+         --workers 2 \
+         --proxy-headers \
+         --forwarded-allow-ips '*' \
+         --timeout-keep-alive 120 
+fi
