@@ -157,6 +157,7 @@ class AppStack(Stack):
                     image_identifier=ecr_repo.repository_uri_for_tag(os.environ.get('IMAGE_TAG', 'latest')),
                     image_configuration=apprunner.CfnService.ImageConfigurationProperty(
                         port="8000",
+                        start_command="/app/entrypoint.sh",
                         runtime_environment_variables=[
                             apprunner.CfnService.KeyValuePairProperty(
                                 name="DJANGO_SETTINGS_MODULE",
