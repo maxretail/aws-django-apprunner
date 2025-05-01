@@ -60,23 +60,14 @@ class AppStack(Stack):
             exclude_characters="/@\"'\\"
         )
 
-        # Get database configuration from environment
-        db_instance_class = os.environ.get('DB_INSTANCE_CLASS', 'BURSTABLE3')
-        db_instance_size = os.environ.get('DB_INSTANCE_SIZE', 'MICRO')
-        db_storage_size = int(os.environ.get('DB_STORAGE_SIZE', '20'))
-
-        # Convert instance class string to enum
-        instance_class = getattr(ec2.InstanceClass, db_instance_class)
-        instance_size = getattr(ec2.InstanceSize, db_instance_size)
-
         db = rds.DatabaseInstance(
             self, f"{app_name}Db",
             engine=rds.DatabaseInstanceEngine.postgres(
                 version=rds.PostgresEngineVersion.VER_15
             ),
             instance_type=ec2.InstanceType.of(
-                instance_class,
-                instance_size
+                ec2.InstanceClass.BURSTABLE3,
+                ec2.InstanceSize.MICRO
             ),
             vpc=vpc,
             vpc_subnets=ec2.SubnetSelection(
@@ -90,7 +81,6 @@ class AppStack(Stack):
             backup_retention=Duration.days(7),
             monitoring_interval=Duration.seconds(60),
             enable_performance_insights=True,
-            allocated_storage=db_storage_size,
         )
 
         # Use existing ECR repository
