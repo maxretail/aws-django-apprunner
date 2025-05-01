@@ -2,6 +2,8 @@ from functools import wraps
 import asyncio
 from django.urls import path
 from django.views.decorators.http import require_http_methods
+from django.views.decorators.csrf import csrf_exempt
+from asgiref.sync import sync_to_async, async_to_sync
 import logging
 
 logger = logging.getLogger(__name__)
@@ -19,8 +21,16 @@ class Router:
     def route(self, url_pattern, methods=None):
         def decorator(view_func):
             @wraps(view_func)
-            async def _wrapped_view(request, *args, **kwargs):
-                return await view_func(request, *args, **kwargs)
+            @csrf_exempt
+            def _wrapped_view(request, *args, **kwargs):
+                try:
+                    # Convert the async view to sync
+                    sync_view = async_to_sync(view_func)
+                    response = sync_view(request, *args, **kwargs)
+                    return response
+                except Exception as e:
+                    logger.error(f"Error in view {view_func.__name__}: {str(e)}")
+                    raise
             
             # Apply HTTP method decorator if specified
             if methods:
