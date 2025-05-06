@@ -13,6 +13,12 @@ if [ -z "$AWS_REGION" ]; then
     exit 1
 fi
 
+# Set verbose logging if debug is enabled
+if [ "$CDK_DEBUG" = "true" ]; then
+    set -x  # Enable command echo
+    export PYTHONVERBOSE=1
+fi
+
 REPO_NAME=${APP_NAME}
 STACK_NAME="${REPO_NAME}Stack"
 TIMESTAMP=$(date +%Y%m%d%H%M%S)
@@ -85,15 +91,49 @@ if ! docker push ${ECR_REPO}:${TIMESTAMP}; then
     exit 1
 fi
 
+# Verify AWS Secrets Manager access before deployment
+echo "Verifying secrets access before deployment..."
+SECRETS_PATTERN="${APP_NAME}_"
+echo "Looking for secrets matching pattern: $SECRETS_PATTERN"
+
+SECRETS=$(aws secretsmanager list-secrets --filters Key=name,Values="$SECRETS_PATTERN" --query "SecretList[].Name" --output text)
+if [ -z "$SECRETS" ]; then
+    echo "⚠️ WARNING: No secrets found matching pattern $SECRETS_PATTERN"
+    echo "Make sure you have pushed secrets using the push_secrets.py script."
+    echo "Continuing with deployment, but your application may not have required secrets."
+else
+    echo "✅ Found the following secrets that will be available to the application:"
+    for SECRET in $SECRETS; do
+        # Get secret keys without exposing values
+        SECRET_KEYS=$(aws secretsmanager get-secret-value --secret-id "$SECRET" --query "SecretString" --output text | jq -r 'keys | join(", ")')
+        echo "  - $SECRET (Keys: $SECRET_KEYS)"
+    done
+fi
+
 # Now deploy the full stack with the timestamped image
 echo "Deploying stack ${STACK_NAME}..."
 cd cdk
 if ! APP_NAME=${REPO_NAME} IMAGE_TAG=${TIMESTAMP} cdk deploy ${STACK_NAME} \
   --require-approval never \
   --outputs-file ../cdk-outputs.json \
-  --progress events; then
+  --progress events \
+  --verbose; then
     echo "Error: CDK deployment failed"
     exit 1
+fi
+
+# After deployment, verify the environment variables that will be available
+echo "Deployment successful! Checking environment variables configuration..."
+# List environment variables that were configured (not values, just names)
+ENV_VARS=$(aws apprunner describe-service --service-arn $(cat ../cdk-outputs.json | jq -r '."'${STACK_NAME}'".AppRunnerServiceArn') --query "Service.SourceConfiguration.ImageConfiguration.RuntimeEnvironmentVariables[*].Name" --output text 2>/dev/null || echo "Unable to retrieve environment variables")
+
+if [ -n "$ENV_VARS" ]; then
+    echo "✅ The following environment variables are configured in App Runner:"
+    for VAR in $ENV_VARS; do
+        echo "  - $VAR"
+    done
+else
+    echo "⚠️ Unable to retrieve environment variables configuration."
 fi
 
 echo "Deployment complete! The new image has been pushed to ${ECR_REPO} with tag ${TIMESTAMP}" 

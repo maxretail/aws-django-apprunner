@@ -15,6 +15,12 @@ from constructs import Construct
 import secrets
 import string
 import os
+import logging
+from secrets_manager import SecretManager
+
+# Set up logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger('AppStack')
 
 class AppStack(Stack):
     def __init__(self, scope: Construct, construct_id: str, app_name: str, **kwargs) -> None:
@@ -23,8 +29,39 @@ class AppStack(Stack):
             
         super().__init__(scope, construct_id, **kwargs)
 
+        logger.info(f"Initializing AppStack for app: {app_name}")
+        
         # Get superuser email from environment or use default
         superuser_email = os.environ.get('DJANGO_SUPERUSER_EMAIL', 'devops@example.com')
+        logger.info(f"Using superuser email: {superuser_email}")
+
+        # Initialize our Secret Manager
+        logger.info("Initializing Secret Manager")
+        secret_manager = SecretManager(self, app_name)
+        
+        # Automatically discover and load all secret files from the .secrets directory
+        # This makes the stack dynamic - just add files to .secrets/ and they'll be included
+        logger.info("Discovering secret files")
+        secrets_found = secret_manager.discover_and_load_all_secret_files()
+        
+        # Create Django defaults if no django secret file exists
+        # This ensures critical secrets always have sensible defaults
+        if 'django' not in secrets_found:
+            logger.info("No django secret file found, creating defaults")
+            django_defaults = {
+                "DJANGO_SECRET_KEY": ''.join(secrets.choice(string.ascii_letters + string.digits + string.punctuation) for _ in range(50)),
+                "DJANGO_SUPERUSER_PASSWORD": ''.join(secrets.choice(string.ascii_letters + string.digits + '@#$%^&*') for _ in range(16))
+            }
+            secret_manager.add_secret_file("django", django_defaults)
+            logger.info("Created default django secrets")
+        
+        # Create the secrets in AWS Secrets Manager
+        logger.info("Creating secrets in AWS Secrets Manager")
+        app_secrets = secret_manager.create_secrets_in_secrets_manager()
+        logger.info(f"Created {len(app_secrets)} secrets in AWS Secrets Manager")
+
+        # Log which secret files were found and will be used
+        print(f"Found and loaded {len(secrets_found)} secret files: {', '.join(secrets_found.keys())}")
 
         # Create VPC
         vpc = ec2.Vpc(
@@ -89,20 +126,6 @@ class AppStack(Stack):
             repository_name=app_name
         )
 
-        # Generate a secure Django secret key
-        django_secret_key = ''.join(secrets.choice(string.ascii_letters + string.digits + string.punctuation) for _ in range(50))
-
-        # Create secrets for Django settings
-        django_secret = secretsmanager.Secret(
-            self, f"{app_name}Secret",
-            description=f"Django secret key and settings for {app_name}",
-            generate_secret_string=secretsmanager.SecretStringGenerator(
-                secret_string_template='{"django_secret_key": "placeholder"}',
-                generate_string_key="django_secret_key",
-                exclude_characters='"@/\\'
-            )
-        )
-
         # Create App Runner instance role
         instance_role = iam.Role(
             self, f"{app_name}InstanceRole",
@@ -129,8 +152,12 @@ class AppStack(Stack):
         ))
 
         # Grant minimal permissions to access secrets
-        django_secret.grant_read(instance_role)
+        logger.info("Granting permissions to access secrets")
+        for secret_name, secret in app_secrets.items():
+            secret.grant_read(instance_role)
+            logger.info(f"Granted access to secret: {secret_name}")
         db.secret.grant_read(instance_role)
+        logger.info("Granted access to database secret")
         ecr_repo.grant_pull(access_role)
 
         # Create VPC connector
@@ -150,6 +177,50 @@ class AppStack(Stack):
         
         print(f"Setting CSRF_TRUSTED_ORIGINS to: {csrf_origins}")
 
+        # Get environment variables from our app secrets
+        logger.info("Getting environment variables from secrets")
+        env_vars = secret_manager.get_environment_variables()
+        logger.info(f"Got {len(env_vars)} environment variables from secrets")
+        
+        # Add standard environment variables
+        logger.info("Adding standard environment variables")
+        standard_env_vars = [
+            apprunner.CfnService.KeyValuePairProperty(
+                name="DJANGO_SETTINGS_MODULE",
+                value="config.settings.production"
+            ),
+            apprunner.CfnService.KeyValuePairProperty(
+                name="DB_NAME",
+                value=app_name.lower()
+            ),
+            apprunner.CfnService.KeyValuePairProperty(
+                name="DB_USER",
+                value=db.secret.secret_value_from_json("username").to_string()
+            ),
+            apprunner.CfnService.KeyValuePairProperty(
+                name="DB_PASSWORD",
+                value=db.secret.secret_value_from_json("password").to_string()
+            ),
+            apprunner.CfnService.KeyValuePairProperty(
+                name="DB_HOST",
+                value=db.db_instance_endpoint_address
+            ),
+            apprunner.CfnService.KeyValuePairProperty(
+                name="DB_PORT",
+                value=db.db_instance_endpoint_port
+            ),
+            apprunner.CfnService.KeyValuePairProperty(
+                name="CSRF_TRUSTED_ORIGINS",
+                value=",".join(csrf_origins)
+            ),
+            apprunner.CfnService.KeyValuePairProperty(
+                name="DJANGO_SUPERUSER_EMAIL",
+                value=superuser_email
+            ),
+        ]
+        env_vars.extend(standard_env_vars)
+        logger.info(f"Total environment variables: {len(env_vars)}")
+
         app_runner_service = apprunner.CfnService(
             self, f"{app_name}Service",
             source_configuration=apprunner.CfnService.SourceConfigurationProperty(
@@ -158,48 +229,7 @@ class AppStack(Stack):
                     image_configuration=apprunner.CfnService.ImageConfigurationProperty(
                         port="8000",
                         start_command="/app/entrypoint.sh",
-                        runtime_environment_variables=[
-                            apprunner.CfnService.KeyValuePairProperty(
-                                name="DJANGO_SETTINGS_MODULE",
-                                value="config.settings.production"
-                            ),
-                            apprunner.CfnService.KeyValuePairProperty(
-                                name="DB_NAME",
-                                value=app_name.lower()
-                            ),
-                            apprunner.CfnService.KeyValuePairProperty(
-                                name="DB_USER",
-                                value=db.secret.secret_value_from_json("username").to_string()
-                            ),
-                            apprunner.CfnService.KeyValuePairProperty(
-                                name="DB_PASSWORD",
-                                value=db.secret.secret_value_from_json("password").to_string()
-                            ),
-                            apprunner.CfnService.KeyValuePairProperty(
-                                name="DB_HOST",
-                                value=db.db_instance_endpoint_address
-                            ),
-                            apprunner.CfnService.KeyValuePairProperty(
-                                name="DB_PORT",
-                                value=db.db_instance_endpoint_port
-                            ),
-                            apprunner.CfnService.KeyValuePairProperty(
-                                name="DJANGO_SECRET_KEY",
-                                value=django_secret.secret_value_from_json("django_secret_key").to_string()
-                            ),
-                            apprunner.CfnService.KeyValuePairProperty(
-                                name="CSRF_TRUSTED_ORIGINS",
-                                value=",".join(csrf_origins)
-                            ),
-                            apprunner.CfnService.KeyValuePairProperty(
-                                name="DJANGO_SUPERUSER_PASSWORD",
-                                value=django_secret.secret_value_from_json("django_secret_key").to_string()
-                            ),
-                            apprunner.CfnService.KeyValuePairProperty(
-                                name="DJANGO_SUPERUSER_EMAIL",
-                                value=superuser_email
-                            ),
-                        ]
+                        runtime_environment_variables=env_vars
                     ),
                     image_repository_type="ECR",
                 ),
@@ -248,6 +278,11 @@ class AppStack(Stack):
             description="ECR repository URI",
         )
 
+        # Get the Django secret ARN for display
+        django_secret_name = f"{app_name}_django"
+        django_secret = app_secrets.get(django_secret_name)
+        django_secret_arn = django_secret.secret_arn if django_secret else "No Django secret found"
+
         # Add admin login information
         CfnOutput(
             self, "AdminLoginInfo",
@@ -256,9 +291,9 @@ class AppStack(Stack):
                 f"URL: https://{app_runner_service.attr_service_url}/admin\n"
                 f"Email: {superuser_email}\n"
                 "Username: admin\n"
-                f"Password: Get it from Secrets Manager - {django_secret.secret_arn}\n"
+                f"Password: Get it from Secrets Manager - {django_secret_arn}\n"
                 "AWS CLI command to get password:\n"
-                f"aws secretsmanager get-secret-value --secret-id {django_secret.secret_arn} --query 'SecretString' --output text | jq -r '.django_secret_key'"
+                f"aws secretsmanager get-secret-value --secret-id {django_secret_arn} --query 'SecretString' --output text | jq -r '.DJANGO_SUPERUSER_PASSWORD'"
             ),
             description="Admin login information"
         ) 

@@ -46,4 +46,7 @@ Thumbs.db
 # AWS
 .cdk.staging/
 cdk.out/
-cdk-outputs.json 
+cdk-outputs.json
+
+# Secrets
+.secrets/ 
