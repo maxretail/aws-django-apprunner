@@ -18,7 +18,7 @@ import os
 import logging
 from secrets_manager import SecretManager
 
-# Set up logging
+# Set up logging at INFO level
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger('AppStack')
 

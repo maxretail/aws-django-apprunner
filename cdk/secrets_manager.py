@@ -10,13 +10,27 @@ from aws_cdk import (
 )
 from constructs import Construct
 
-# Set up logging
+# Set up logging back to INFO level
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger('SecretManager')
 
 # Constants
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 DEFAULT_SECRETS_DIR = os.path.join(PROJECT_ROOT, ".secrets")
+
+def mask_secret_value(value):
+    """
+    Mask a secret value to show only first and last character.
+    
+    Args:
+        value: The secret value to mask
+    
+    Returns:
+        Masked value like: f***t (for 'first')
+    """
+    if not value or len(value) <= 2:
+        return "***"
+    return f"{value[0]}****{value[-1]}"
 
 class SecretManager:
     """
@@ -71,6 +85,11 @@ class SecretManager:
         
         # Store the secret file and its key-value pairs
         self.secrets[filename] = values
+        
+        # Log the keys with masked values
+        masked_values = {k: mask_secret_value(v) for k, v in values.items()}
+        logger.info(f"Loaded secret file '{filename}' with {len(values)} key(s): {masked_values}")
+        
         return values
         
     def create_secrets_in_secrets_manager(self):
@@ -136,7 +155,7 @@ class SecretManager:
                         value=aws_secret.secret_value_from_json(key).to_string()
                     )
                 )
-                logger.info(f"Added environment variable: {key.upper()} (from {secret_name})")
+                logger.info(f"Added environment variable: {key.upper()} from {secret_name}")
         
         logger.info(f"Total environment variables from secrets: {len(env_vars)}")
         return env_vars

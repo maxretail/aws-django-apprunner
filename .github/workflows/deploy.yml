@@ -58,7 +58,7 @@ jobs:
             pip install -r cdk/requirements.txt
           fi
 
-      - name: List available secrets in AWS Secrets Manager
+      - name: Check for secrets in AWS Secrets Manager
         run: |
           echo "Checking for secrets in AWS Secrets Manager for app: ${{ env.APP_NAME }}"
           SECRETS=$(aws secretsmanager list-secrets --filters Key=name,Values="${{ env.APP_NAME }}_" --query "SecretList[].Name" --output text)
@@ -68,18 +68,18 @@ jobs:
           else
             echo "✅ Found the following secrets:"
             echo "$SECRETS" | tr '\t' '\n' | while read SECRET; do
-              KEYS=$(aws secretsmanager get-secret-value --secret-id "$SECRET" --query "SecretString" --output text | jq -r 'keys | join(", ")')
-              echo "  - $SECRET (Keys: $KEYS)"
+              # Get keys and mask each value
+              SECRET_DETAIL=$(aws secretsmanager get-secret-value --secret-id "$SECRET" --query "SecretString" --output text)
+              echo "  - $SECRET with keys:"
+              echo "$SECRET_DETAIL" | jq -r 'to_entries | .[] | "    • \(.key): \(.value[0:1])****\(.value[-1:1])"'
             done
           fi
 
       - name: Make deploy script executable
         run: chmod +x scripts/deploy.sh
 
-      - name: Run deployment with verbose logging
+      - name: Run deployment
         run: |
           export APP_NAME=${{ env.APP_NAME }}
           export AWS_REGION=${{ env.AWS_REGION }}
-          export CDK_DEBUG=true  # Enable CDK debug logging
-          export CDK_LOG_LEVEL=debug  # Set CDK log level to debug
           ./scripts/deploy.sh 
