@@ -33,33 +33,7 @@ class AppStack(Stack):
         superuser_email = os.environ.get('DJANGO_SUPERUSER_EMAIL', 'devops@example.com')
         logger.info(f"Using superuser email: {superuser_email}")
 
-        # Access existing secrets from AWS Secrets Manager
-        app_secrets = {}
-        django_secret_name = f"{app_name}_django"
-        
-        # Find all secrets with app name prefix
-        logger.info(f"Looking for existing secrets with prefix: {app_name}_")
-        existing_secrets = self.node.try_find_child("ExistingSecrets")
-        
-        if not existing_secrets:
-            existing_secrets = {}
-            # Look up and import existing secrets
-            for secret_suffix in ["django"]:  # Add more known secret types as needed
-                secret_name = f"{app_name}_{secret_suffix}"
-                try:
-                    secret = secretsmanager.Secret.from_secret_name_v2(
-                        self, 
-                        f"{app_name}Secret{secret_suffix.capitalize()}",
-                        secret_name
-                    )
-                    app_secrets[secret_name] = secret
-                    logger.info(f"Found existing secret: {secret_name}")
-                except Exception as e:
-                    logger.warning(f"Could not find secret {secret_name}: {str(e)}")
-
-        # Log which secret files were found and will be used
-        logger.info(f"Using {len(app_secrets)} existing secrets from AWS Secrets Manager")
-
+ 
         # Create VPC
         vpc = ec2.Vpc(
             self, f"{app_name}Vpc",
@@ -289,20 +263,3 @@ class AppStack(Stack):
             value=ecr_repo.repository_uri,
             description="ECR repository URI",
         )
-
-        # Get the Django secret ARN for display if it exists
-        django_secret = app_secrets.get(django_secret_name)
-        django_secret_arn = django_secret.secret_arn if django_secret else "Django secret should be manually created before deployment"
-
-        # Add admin login information
-        CfnOutput(
-            self, "AdminLoginInfo",
-            value=(
-                "Admin Login Details:\n"
-                f"URL: https://{app_runner_service.attr_service_url}/admin\n"
-                f"Email: {superuser_email}\n"
-                "Username: admin\n"
-                f"Password: Can be retrieved from Secrets Manager - {django_secret_name}"
-            ),
-            description="Admin login information"
-        ) 
