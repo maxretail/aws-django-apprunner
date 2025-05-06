@@ -85,20 +85,6 @@ if ! docker push ${ECR_REPO}:${TIMESTAMP}; then
     exit 1
 fi
 
-# Verification of secrets before deployment
-echo "Verifying secrets for app ${APP_NAME}..."
-SECRETS=$(aws secretsmanager list-secrets --filters Key=name,Values="${APP_NAME}_" --query "SecretList[].Name" --output text)
-if [ -z "$SECRETS" ]; then
-    echo "⚠️ WARNING: No secrets found. Application may not have required secrets."
-else
-    echo "✅ Found the following secrets:"
-    for SECRET in $SECRETS; do
-        # Get secret keys and mask values
-        echo "  - $SECRET with keys:"
-        aws secretsmanager get-secret-value --secret-id "$SECRET" --query "SecretString" --output text | \
-        jq -r 'to_entries | .[] | "    • \(.key): \(.value[0:1])****\(.value[-1:1])"'
-    done
-fi
 
 # Deploy the full stack with the timestamped image
 echo "Deploying stack ${STACK_NAME}..."
@@ -109,20 +95,6 @@ if ! APP_NAME=${REPO_NAME} IMAGE_TAG=${TIMESTAMP} cdk deploy ${STACK_NAME} \
   --progress events; then
     echo "Error: CDK deployment failed"
     exit 1
-fi
-
-# After deployment, verify the environment variables that will be available
-echo "Deployment successful! Checking environment variables configuration..."
-# List environment variables that were configured (not values, just names)
-ENV_VARS=$(aws apprunner describe-service --service-arn $(cat ../cdk-outputs.json | jq -r '."'${STACK_NAME}'".AppRunnerServiceArn') --query "Service.SourceConfiguration.ImageConfiguration.RuntimeEnvironmentVariables[*].Name" --output text 2>/dev/null || echo "Unable to retrieve environment variables")
-
-if [ -n "$ENV_VARS" ]; then
-    echo "✅ The following environment variables are configured in App Runner:"
-    for VAR in $ENV_VARS; do
-        echo "  - $VAR"
-    done
-else
-    echo "⚠️ Unable to retrieve environment variables configuration."
 fi
 
 echo "Deployment complete! The new image has been pushed to ${ECR_REPO} with tag ${TIMESTAMP}" 

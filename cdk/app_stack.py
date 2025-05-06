@@ -12,11 +12,9 @@ from aws_cdk import (
     Duration,
 )
 from constructs import Construct
-import secrets
 import string
 import os
 import logging
-from secrets_manager import SecretManager
 
 # Set up logging at INFO level
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -35,33 +33,32 @@ class AppStack(Stack):
         superuser_email = os.environ.get('DJANGO_SUPERUSER_EMAIL', 'devops@example.com')
         logger.info(f"Using superuser email: {superuser_email}")
 
-        # Initialize our Secret Manager
-        logger.info("Initializing Secret Manager")
-        secret_manager = SecretManager(self, app_name)
+        # Access existing secrets from AWS Secrets Manager
+        app_secrets = {}
+        django_secret_name = f"{app_name}_django"
         
-        # Automatically discover and load all secret files from the .secrets directory
-        # This makes the stack dynamic - just add files to .secrets/ and they'll be included
-        logger.info("Discovering secret files")
-        secrets_found = secret_manager.discover_and_load_all_secret_files()
+        # Find all secrets with app name prefix
+        logger.info(f"Looking for existing secrets with prefix: {app_name}_")
+        existing_secrets = self.node.try_find_child("ExistingSecrets")
         
-        # Create Django defaults if no django secret file exists
-        # This ensures critical secrets always have sensible defaults
-        if 'django' not in secrets_found:
-            logger.info("No django secret file found, creating defaults")
-            django_defaults = {
-                "DJANGO_SECRET_KEY": ''.join(secrets.choice(string.ascii_letters + string.digits + string.punctuation) for _ in range(50)),
-                "DJANGO_SUPERUSER_PASSWORD": ''.join(secrets.choice(string.ascii_letters + string.digits + '@#$%^&*') for _ in range(16))
-            }
-            secret_manager.add_secret_file("django", django_defaults)
-            logger.info("Created default django secrets")
-        
-        # Create the secrets in AWS Secrets Manager
-        logger.info("Creating secrets in AWS Secrets Manager")
-        app_secrets = secret_manager.create_secrets_in_secrets_manager()
-        logger.info(f"Created {len(app_secrets)} secrets in AWS Secrets Manager")
+        if not existing_secrets:
+            existing_secrets = {}
+            # Look up and import existing secrets
+            for secret_suffix in ["django"]:  # Add more known secret types as needed
+                secret_name = f"{app_name}_{secret_suffix}"
+                try:
+                    secret = secretsmanager.Secret.from_secret_name_v2(
+                        self, 
+                        f"{app_name}Secret{secret_suffix.capitalize()}",
+                        secret_name
+                    )
+                    app_secrets[secret_name] = secret
+                    logger.info(f"Found existing secret: {secret_name}")
+                except Exception as e:
+                    logger.warning(f"Could not find secret {secret_name}: {str(e)}")
 
         # Log which secret files were found and will be used
-        print(f"Found and loaded {len(secrets_found)} secret files: {', '.join(secrets_found.keys())}")
+        logger.info(f"Using {len(app_secrets)} existing secrets from AWS Secrets Manager")
 
         # Create VPC
         vpc = ec2.Vpc(
@@ -151,11 +148,25 @@ class AppStack(Stack):
             resources=["*"]  # GetAuthorizationToken requires resource "*"
         ))
 
-        # Grant minimal permissions to access secrets
-        logger.info("Granting permissions to access secrets")
-        for secret_name, secret in app_secrets.items():
-            secret.grant_read(instance_role)
-            logger.info(f"Granted access to secret: {secret_name}")
+        # Add policy to allow retrieving secrets matching the app name prefix 
+        instance_role.add_to_policy(iam.PolicyStatement(
+            effect=iam.Effect.ALLOW,
+            actions=[
+                "secretsmanager:GetSecretValue",
+                "secretsmanager:DescribeSecret"
+            ],
+            resources=[f"arn:aws:secretsmanager:*:*:secret:{app_name}_*"]
+        ))
+        
+        # Add policy to allow listing secrets at the account level
+        instance_role.add_to_policy(iam.PolicyStatement(
+            effect=iam.Effect.ALLOW,
+            actions=["secretsmanager:ListSecrets"],
+            resources=["*"]  # ListSecrets requires a resource of "*"
+        ))
+
+        # Grant permissions to access database secret
+        logger.info("Granting permissions to access database secret")
         db.secret.grant_read(instance_role)
         logger.info("Granted access to database secret")
         ecr_repo.grant_pull(access_role)
@@ -177,11 +188,8 @@ class AppStack(Stack):
         
         print(f"Setting CSRF_TRUSTED_ORIGINS to: {csrf_origins}")
 
-        # Get environment variables from our app secrets
-        logger.info("Getting environment variables from secrets")
-        env_vars = secret_manager.get_environment_variables()
-        logger.info(f"Got {len(env_vars)} environment variables from secrets")
-        
+        # Prepare environment variables for App Runner
+        env_vars = []
         # Add standard environment variables
         logger.info("Adding standard environment variables")
         standard_env_vars = [
@@ -216,6 +224,10 @@ class AppStack(Stack):
             apprunner.CfnService.KeyValuePairProperty(
                 name="DJANGO_SUPERUSER_EMAIL",
                 value=superuser_email
+            ),
+            apprunner.CfnService.KeyValuePairProperty(
+                name="APP_NAME",
+                value=app_name
             ),
         ]
         env_vars.extend(standard_env_vars)
@@ -278,10 +290,9 @@ class AppStack(Stack):
             description="ECR repository URI",
         )
 
-        # Get the Django secret ARN for display
-        django_secret_name = f"{app_name}_django"
+        # Get the Django secret ARN for display if it exists
         django_secret = app_secrets.get(django_secret_name)
-        django_secret_arn = django_secret.secret_arn if django_secret else "No Django secret found"
+        django_secret_arn = django_secret.secret_arn if django_secret else "Django secret should be manually created before deployment"
 
         # Add admin login information
         CfnOutput(
@@ -291,9 +302,7 @@ class AppStack(Stack):
                 f"URL: https://{app_runner_service.attr_service_url}/admin\n"
                 f"Email: {superuser_email}\n"
                 "Username: admin\n"
-                f"Password: Get it from Secrets Manager - {django_secret_arn}\n"
-                "AWS CLI command to get password:\n"
-                f"aws secretsmanager get-secret-value --secret-id {django_secret_arn} --query 'SecretString' --output text | jq -r '.DJANGO_SUPERUSER_PASSWORD'"
+                f"Password: Can be retrieved from Secrets Manager - {django_secret_name}"
             ),
             description="Admin login information"
         ) 

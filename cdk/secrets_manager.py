@@ -117,7 +117,7 @@ class SecretManager:
                 description=f"Secrets for {self.app_name} - {filename}",
                 secret_name=secret_name,
                 secret_object_value={
-                    key: secretsmanager.SecretStringValueFinder.find(value)
+                    key: value
                     for key, value in values.items()
                 }
             )
