@@ -21,7 +21,6 @@
 	},
 
 	"mounts": [
-		"source=/var/run/docker.sock,target=/var/run/docker.sock,type=bind",
 		"source=${localWorkspaceFolder}/APPCONFIG.env,target=${localWorkspaceFolder}/APPCONFIG.env,type=bind"
 	],
 
@@ -47,5 +46,5 @@
 	"initializeCommand": "",
 
 	// Run commands after container is created
-	"postStartCommand": "sudo chown root:docker /var/run/docker.sock && sudo chmod 660 /var/run/docker.sock && set -a && . ${localWorkspaceFolder}/APPCONFIG.env && set +a"
+	"postStartCommand": "set -a && . ${localWorkspaceFolder}/APPCONFIG.env && set +a"
 }
