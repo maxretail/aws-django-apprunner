@@ -1,5 +1,6 @@
 import os
 import logging
+import json
 from .base import *
 
 logger = logging.getLogger(__name__)
@@ -10,6 +11,10 @@ DEBUG = False
 ALLOWED_HOSTS = ['*']  # Allow all hosts in App Runner environment
 SECRET_KEY = os.getenv('DJANGO_SECRET_KEY')
 CSRF_TRUSTED_ORIGINS = os.getenv('CSRF_TRUSTED_ORIGINS', '').split(',')
+
+# Check if API keys are properly configured
+if not API_KEYS:
+    logger.error("No API keys defined! Authentication will fail for all requests. Set API_KEYS environment variable.")
 
 # Static files configuration with WhiteNoise
 MIDDLEWARE.insert(1, 'whitenoise.middleware.WhiteNoiseMiddleware')  # Add after SecurityMiddleware

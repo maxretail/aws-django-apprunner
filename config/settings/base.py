@@ -11,6 +11,8 @@ https://docs.djangoproject.com/en/4.2/ref/settings/
 """
 
 from pathlib import Path
+import os
+import json
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
@@ -46,6 +48,7 @@ MIDDLEWARE = [
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
+    'apps.core.middleware.SimpleApiKeyMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
@@ -122,3 +125,36 @@ STATIC_URL = 'static/'
 # https://docs.djangoproject.com/en/4.2/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+# Authentication settings
+AUTHENTICATION_BACKENDS = [
+    'django.contrib.auth.backends.ModelBackend',
+]
+
+# REST Framework settings
+REST_FRAMEWORK = {
+    'DEFAULT_AUTHENTICATION_CLASSES': [
+        'apps.core.authentication.SimpleApiKeyAuthentication',
+    ],
+    'DEFAULT_PERMISSION_CLASSES': [
+        'rest_framework.permissions.IsAuthenticated',
+    ],
+}
+
+# Support for multiple API keys from environment variable (JSON array)
+# Example: API_KEYS='["key1", "key2", "key3"]'
+try:
+    api_keys_json = os.environ.get('API_KEYS', '[]')
+    API_KEYS = json.loads(api_keys_json)
+    if not isinstance(API_KEYS, list):
+        print("Warning: API_KEYS environment variable is not a valid JSON array. Using empty list.")
+        API_KEYS = []
+except json.JSONDecodeError:
+    print(f"Warning: Failed to parse API_KEYS as JSON. Using empty list.")
+    API_KEYS = []
+    
+# In production, we won't add a default key - you must specify API keys
+# In development, we'll add a default key for convenience
+if not API_KEYS and os.environ.get('DJANGO_SETTINGS_MODULE', '').endswith('.development'):
+    print("Development environment detected. Adding default API key.")
+    API_KEYS = ['dev-api-key-for-testing']
