@@ -17,9 +17,9 @@ class SimpleApiKeyAuthentication(BaseAuthentication):
     """
     def authenticate(self, request):
         # Log all request details for debugging
-        logger.info(f"Auth request received: {request.path}")
-        logger.info(f"Headers: {dict(request.headers)}")
-        logger.info(f"GET: {request.GET}")
+        logger.debug(f"Auth request received: {request.path}")
+        logger.debug(f"Headers: {dict(request.headers)}")
+        logger.debug(f"GET: {request.GET}")
         
         # Get API keys from settings
         api_keys = getattr(settings, 'API_KEYS', [])
@@ -29,7 +29,7 @@ class SimpleApiKeyAuthentication(BaseAuthentication):
             logger.error("No API keys configured. Authentication will fail for all requests.")
             raise AuthenticationFailed('No API keys configured on the server')
             
-        logger.info(f"Number of configured API keys: {len(api_keys)}")
+        logger.debug(f"Number of configured API keys: {len(api_keys)}")
         
         # Get key from request
         request_key = None

@@ -37,6 +37,118 @@ The devcontainer automatically configures:
 - AWS credentials (if available)
 - Development database
 - Django development server
+- Development tool aliases and welcome message
+
+When you first open the devcontainer, you'll see a welcome message showing all available development tools and aliases. The welcome script will also check if Docker Compose services are running and offer to start them if needed. You can view this message anytime by running:
+
+```bash
+welcome              # Show development tools overview
+./scripts/welcome.sh # Direct script access
+```
+
+### Running Tests
+
+The project includes several convenient ways to run Django tests:
+
+1. **Using the test script** (recommended):
+   ```bash
+   ./scripts/test.sh
+   ```
+
+2. **Using convenient aliases** (available after devcontainer setup):
+   ```bash
+   test        # Short alias
+   runtests    # Descriptive alias
+   ```
+
+3. **Direct Docker command**:
+   ```bash
+   docker compose exec app python manage.py test
+   ```
+
+All methods run the Django test suite inside the Docker container, ensuring tests run in the same environment as your application. The test script and aliases support all Django test arguments:
+
+#### Test Examples
+
+```bash
+# Run all tests
+./scripts/test.sh
+
+# Run tests for a specific app
+./scripts/test.sh apps.core
+./scripts/test.sh apps.projects
+
+# Run tests with increased verbosity
+./scripts/test.sh -v 2
+./scripts/test.sh --verbosity=2
+
+# Run specific test class or method
+./scripts/test.sh apps.core.tests.test_authentication.TestApiKeyAuth
+./scripts/test.sh apps.core.tests.test_authentication.TestApiKeyAuth.test_valid_api_key
+
+# Combine options - run specific app with high verbosity and stop on first failure
+./scripts/test.sh apps.core -v 2 --failfast
+
+# Show test help
+./scripts/test.sh --help
+
+# Using aliases (same arguments work)
+test apps.core -v 2
+runtests --failfast
+```
+
+#### Common Django Test Options
+
+- `-v 0|1|2|3` or `--verbosity=0|1|2|3`: Control verbosity level
+- `--failfast`: Stop running tests after first failure
+- `--keepdb`: Keep test database between runs (faster for repeated testing)
+- `--parallel`: Run tests in parallel (use with caution)
+- `--debug-mode`: Turn on debugging mode
+- `--help`: Show all available options
+
+### Container Shell Access
+
+For development tasks that require direct access to the Django application environment, you can open a shell inside the Docker container:
+
+1. **Using the shell script** (recommended):
+   ```bash
+   ./scripts/shell.sh
+   ```
+
+2. **Using convenient aliases** (available after devcontainer setup):
+   ```bash
+   shell       # Short alias
+   appshell    # Descriptive alias
+   ```
+
+3. **Direct Docker command**:
+   ```bash
+   docker compose exec app bash
+   ```
+
+#### Shell Script Examples
+
+```bash
+# Open interactive bash shell in the app container
+./scripts/shell.sh
+
+# Run Django management commands directly
+./scripts/shell.sh python manage.py collectstatic
+./scripts/shell.sh python manage.py makemigrations
+./scripts/shell.sh python manage.py migrate
+
+# Access Django shell
+./scripts/shell.sh python manage.py shell
+
+# Check Django configuration
+./scripts/shell.sh python manage.py check
+
+# Using aliases (same functionality)
+shell
+appshell python manage.py shell
+```
+
+The shell script provides full access to the Django application environment, including all installed packages, environment variables, and database connections configured in your Docker setup.
 
 ### Development Helpers
 

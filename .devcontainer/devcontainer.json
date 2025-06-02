@@ -46,5 +46,5 @@
 	"initializeCommand": "",
 
 	// Run commands after container is created
-	"postStartCommand": "set -a && . ${localWorkspaceFolder}/APPCONFIG.env && set +a"
+	"postStartCommand": "set -a && . /workspaces/aws-django-apprunner/APPCONFIG.env && set +a && echo 'alias test=\"/workspaces/aws-django-apprunner/scripts/test.sh\"' >> ~/.bashrc && echo 'alias runtests=\"/workspaces/aws-django-apprunner/scripts/test.sh\"' >> ~/.bashrc && echo 'alias shell=\"/workspaces/aws-django-apprunner/scripts/shell.sh\"' >> ~/.bashrc && echo 'alias appshell=\"/workspaces/aws-django-apprunner/scripts/shell.sh\"' >> ~/.bashrc && echo 'alias welcome=\"/workspaces/aws-django-apprunner/scripts/welcome.sh\"' >> ~/.bashrc && /workspaces/aws-django-apprunner/scripts/welcome.sh"
 }

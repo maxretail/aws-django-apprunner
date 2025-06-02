@@ -31,14 +31,14 @@ class SimpleApiKeyMiddleware:
             return self.get_response(request)
             
         # Log request details
-        logger.info(f"Middleware processing request: {request.path}")
-        logger.info(f"Headers: {dict(request.headers)}")
+        logger.debug(f"Middleware processing request: {request.path}")
+        logger.debug(f"Headers: {dict(request.headers)}")
         
         # Get API keys from settings
         api_keys = self.api_keys
         
         # Log the available API keys (don't log the actual keys in production)
-        logger.info(f"Number of configured API keys: {len(api_keys)}")
+        logger.debug(f"Number of configured API keys: {len(api_keys)}")
         
         # If no API keys configured, fail with clear error message
         if not api_keys:
