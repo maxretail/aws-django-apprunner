@@ -12,7 +12,6 @@ https://docs.djangoproject.com/en/4.2/ref/settings/
 
 from pathlib import Path
 import os
-import json
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
@@ -141,16 +140,13 @@ REST_FRAMEWORK = {
     ],
 }
 
-# Support for multiple API keys from environment variable (JSON array)
-# Example: API_KEYS='["key1", "key2", "key3"]'
-try:
-    api_keys_json = os.environ.get('API_KEYS', '[]')
-    API_KEYS = json.loads(api_keys_json)
-    if not isinstance(API_KEYS, list):
-        print("Warning: API_KEYS environment variable is not a valid JSON array. Using empty list.")
-        API_KEYS = []
-except json.JSONDecodeError:
-    print(f"Warning: Failed to parse API_KEYS as JSON. Using empty list.")
+# Support for multiple API keys from environment variable (comma-separated string)
+# Example: API_KEYS='key1,key2,key3'
+api_keys_string = os.environ.get('API_KEYS', '')
+if api_keys_string.strip():
+    # Split by comma and strip whitespace from each key
+    API_KEYS = [key.strip() for key in api_keys_string.split(',') if key.strip()]
+else:
     API_KEYS = []
     
 # In production, we won't add a default key - you must specify API keys
