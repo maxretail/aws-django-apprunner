@@ -26,6 +26,7 @@ services:
     entrypoint: ["/app/entrypoint.sh"]
     env_file:
       - APPCONFIG.env
+      - .env
 
   db:
     image: postgres:15

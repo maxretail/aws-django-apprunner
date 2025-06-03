@@ -22,9 +22,24 @@ class SimpleApiKeyMiddleware:
             logger.error("No API keys configured. Authentication will fail for all requests.")
 
     def __call__(self, request):
+        # Check if API authentication is completely disabled via environment variable
+        if os.environ.get('DISABLE_API_AUTH'):
+            logger.debug("API authentication disabled via DISABLE_API_AUTH environment variable")
+            return self.get_response(request)
+            
         # Exclude admin URLs
         if request.path.startswith('/admin/'):
             return self.get_response(request)
+            
+        # Exclude core app endpoints from API key authentication
+        core_exempt_paths = [
+            '/health/',
+            '/test/async-example/',
+        ]
+        
+        for exempt_path in core_exempt_paths:
+            if request.path.startswith(exempt_path):
+                return self.get_response(request)
 
         # Already authenticated
         if request.user.is_authenticated:
