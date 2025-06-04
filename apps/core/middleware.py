@@ -33,12 +33,14 @@ class SimpleApiKeyMiddleware:
             
         # Exclude core app endpoints from API key authentication
         core_exempt_paths = [
-            '/health/',
-            '/test/async-example/',
+            '/health',
+            '/debug',
+            '/test/async-example',
         ]
         
         for exempt_path in core_exempt_paths:
-            if request.path.startswith(exempt_path):
+            # Check if path matches exactly or starts with the path followed by '/'
+            if request.path == exempt_path or request.path.startswith(exempt_path + '/'):
                 return self.get_response(request)
 
         # Already authenticated
