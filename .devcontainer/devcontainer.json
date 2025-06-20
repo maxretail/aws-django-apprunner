@@ -28,7 +28,7 @@
 	// "forwardPorts": [],
 
 	// Use 'postCreateCommand' to run commands after the container is created.
-	"postCreateCommand": "npm install -g aws-cdk && pip install -r requirements-dev.txt",
+	"postCreateCommand": "npm install -g aws-cdk && pip install -r requirements-dev.txt && echo 'source ~/.bashrc' >> ~/.bash_profile && echo 'source ~/.bashrc' >> ~/.profile",
 
 	"customizations": {
 		"vscode": {
@@ -46,5 +46,6 @@
 	"initializeCommand": "",
 
 	// Run commands after container is created
-	"postStartCommand": "set -a && . /workspaces/aws-django-apprunner/APPCONFIG.env && set +a && echo 'alias test=\"/workspaces/aws-django-apprunner/scripts/test.sh\"' >> ~/.bashrc && echo 'alias runtests=\"/workspaces/aws-django-apprunner/scripts/test.sh\"' >> ~/.bashrc && echo 'alias shell=\"/workspaces/aws-django-apprunner/scripts/shell.sh\"' >> ~/.bashrc && echo 'alias appshell=\"/workspaces/aws-django-apprunner/scripts/shell.sh\"' >> ~/.bashrc && echo 'alias welcome=\"/workspaces/aws-django-apprunner/scripts/welcome.sh\"' >> ~/.bashrc && /workspaces/aws-django-apprunner/scripts/welcome.sh"
+	"postStartCommand": "set -a && . ${containerWorkspaceFolder}/APPCONFIG.env && set +a && echo 'alias test=\"${containerWorkspaceFolder}/scripts/test.sh\"' >> ~/.bashrc && echo 'alias runtests=\"${containerWorkspaceFolder}/scripts/test.sh\"' >> ~/.bashrc && echo 'alias shell=\"${containerWorkspaceFolder}/scripts/shell.sh\"' >> ~/.bashrc && echo 'alias appshell=\"${containerWorkspaceFolder}/scripts/shell.sh\"' >> ~/.bashrc && echo 'alias welcome=\"${containerWorkspaceFolder}/scripts/welcome.sh\"' >> ~/.bashrc && ${containerWorkspaceFolder}/scripts/welcome.sh",
+
 }
