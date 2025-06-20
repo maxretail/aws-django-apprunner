@@ -84,3 +84,12 @@ async def async_sleep(seconds: int, task_name: str) -> dict:
         'task': task_name,
         'slept_for': f"{seconds} seconds"
     }
+
+@router.route('protected/', methods=['GET'])
+async def protected(request):
+    """Protected endpoint that requires API key authentication."""
+    logger.debug("Protected route called")
+    return JsonResponse({
+        'message': 'Protected endpoint accessed successfully',
+        'authenticated': True
+    })

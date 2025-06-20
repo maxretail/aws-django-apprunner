@@ -26,8 +26,8 @@ class ApiKeyAuthenticationTest(TestCase):
             password='testpassword'
         )
         
-        # Create a test endpoint URL (using the correct path for debug)
-        self.url = '/debug/'  # Update to the correct path
+        # Create a test endpoint URL (using the protected path that requires auth)
+        self.url = '/protected/'
         
         # Create a test client
         self.client = Client()
@@ -154,15 +154,15 @@ class ApiKeyAuthenticationTest(TestCase):
         except json.JSONDecodeError:
             self.fail("Response is not valid JSON")
 
-@override_settings(API_KEYS=[])
 class NoApiKeysTest(TestCase):
     """Test behavior when no API keys are configured"""
     
     def setUp(self):
         """Set up test data"""
-        self.url = '/debug/'
+        self.url = '/protected/'
         self.client = Client()
     
+    @override_settings(API_KEYS=[])
     def test_no_api_keys_configured(self):
         """Test that requests are properly rejected when no API keys are configured"""
         response = self.client.get(self.url)
