@@ -34,12 +34,21 @@ class AppStack(Stack):
         logger.info(f"Using superuser email: {superuser_email}")
 
  
-        # Create VPC
-        vpc = ec2.Vpc(
-            self, f"{app_name}Vpc",
-            max_azs=2,
-            nat_gateways=1,
-        )
+        existing_vpc_id = os.environ.get('USE_VPC_ID')
+        if existing_vpc_id:
+            logger.info(f"Using existing VPC: {existing_vpc_id}")
+            vpc = ec2.Vpc.from_lookup(
+                self, f"{app_name}ExistingVpc",
+                vpc_id=existing_vpc_id
+            )
+        else:
+            logger.info("Creating new VPC")
+            # Create VPC
+            vpc = ec2.Vpc(
+                self, f"{app_name}Vpc",
+                max_azs=2,
+                nat_gateways=1,
+            )
 
         # Create security group for RDS
         db_security_group = ec2.SecurityGroup(
