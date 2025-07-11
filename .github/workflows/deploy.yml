@@ -82,4 +82,5 @@ jobs:
         run: |
           export APP_NAME=${{ env.APP_NAME }}
           export AWS_REGION=${{ env.AWS_REGION }}
+          export USE_VPC_ID=${{ vars.USE_VPC_ID }}
           ./scripts/deploy.sh 
