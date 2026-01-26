@@ -25,10 +25,18 @@
 	],
 
 	// Use 'forwardPorts' to make a list of ports inside the container available locally.
-	// "forwardPorts": [],
+	// Note: This should match the LOCAL_PORT value in APPCONFIG.env (default: 8000)
+	// If you change LOCAL_PORT in APPCONFIG.env, update this value accordingly.
+	"forwardPorts": [8000],
+	"portsAttributes": {
+		"8000": {
+			"label": "Django Development Server",
+			"onAutoForward": "notify"
+		}
+	},
 
 	// Use 'postCreateCommand' to run commands after the container is created.
-	"postCreateCommand": "npm install -g aws-cdk && pip install -r requirements-dev.txt && echo 'source ~/.bashrc' >> ~/.bash_profile && echo 'source ~/.bashrc' >> ~/.profile",
+	"postCreateCommand": "npm install -g aws-cdk && pip install -r requirements-dev.txt && chmod +x ${containerWorkspaceFolder}/.devcontainer/setup-env.sh",
 
 	"customizations": {
 		"vscode": {
@@ -46,6 +54,9 @@
 	"initializeCommand": "",
 
 	// Run commands after container is created
-	"postStartCommand": "set -a && . ${containerWorkspaceFolder}/APPCONFIG.env && set +a && echo 'alias test=\"${containerWorkspaceFolder}/scripts/test.sh\"' >> ~/.bashrc && echo 'alias runtests=\"${containerWorkspaceFolder}/scripts/test.sh\"' >> ~/.bashrc && echo 'alias shell=\"${containerWorkspaceFolder}/scripts/shell.sh\"' >> ~/.bashrc && echo 'alias appshell=\"${containerWorkspaceFolder}/scripts/shell.sh\"' >> ~/.bashrc && echo 'alias welcome=\"${containerWorkspaceFolder}/scripts/welcome.sh\"' >> ~/.bashrc && ${containerWorkspaceFolder}/scripts/welcome.sh",
+	"postStartCommand": "bash -c '${containerWorkspaceFolder}/.devcontainer/setup-env.sh'",
+
+	// Run commands after container is attached
+	"postAttachCommand": "bash -c 'source ~/.bashrc'"
 
 }
