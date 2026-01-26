@@ -84,15 +84,18 @@ echo "Ensuring superuser exists..."
 python manage.py ensure_superuser
 
 # Start the appropriate server based on environment
+# Use LOCAL_PORT if set, otherwise default to 8000
+PORT=${LOCAL_PORT:-8000}
+
 if [ "$DEBUG" = "1" ]; then
-    echo "Starting development server..."
-    exec python manage.py runserver 0.0.0.0:8000
+    echo "Starting development server on port $PORT..."
+    exec python manage.py runserver 0.0.0.0:$PORT
 else
     echo "Collecting static files..."
     python manage.py collectstatic --noinput
     
-    echo "Starting production server..."
-    exec uvicorn config.asgi:application --host 0.0.0.0 --port 8000 \
+    echo "Starting production server on port $PORT..."
+    exec uvicorn config.asgi:application --host 0.0.0.0 --port $PORT \
          --workers 2 \
          --proxy-headers \
          --forwarded-allow-ips '*' \

@@ -8,7 +8,7 @@ services:
       - media:/app/media
       - .:/app
     ports:
-      - "8000:8000"
+      - "${LOCAL_PORT:-8000}:${LOCAL_PORT:-8000}"
     environment:
       - DJANGO_SETTINGS_MODULE=config.settings.development
       - DB_HOST=db
@@ -17,7 +17,7 @@ services:
       - DB_USER=postgres
       - DB_PASSWORD=postgres
       - DEBUG=1
-      - CSRF_TRUSTED_ORIGINS=http://localhost:8000
+      - CSRF_TRUSTED_ORIGINS=http://localhost:${LOCAL_PORT:-8000}
       - DJANGO_SECRET_KEY=django-insecure-development-key-for-testing-only
       - API_KEYS=api-key-1,api-key-2,dev-api-key-for-testing
     depends_on:
