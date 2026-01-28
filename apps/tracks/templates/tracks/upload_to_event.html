@@ -1,0 +1,233 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Upload Track to {{ event.name }} - SailArchive{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ol@v9.0.0/ol.css">
+<style>
+    #event-map-preview {
+        width: 100%;
+        height: 400px;
+        min-height: 400px;
+        border-radius: 4px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-8 col-lg-6">
+        <div class="card mb-4">
+            <div class="card-header bg-primary text-white">
+                <h2 class="mb-0">{{ event.name }}</h2>
+            </div>
+            <div class="card-body">
+                <p class="text-muted mb-2">
+                    <strong>Date:</strong> {{ event.date|date:"F d, Y" }}
+                </p>
+                {% if event.event_type %}
+                <p class="text-muted mb-2">
+                    <strong>Type:</strong> {{ event.get_event_type_display }}
+                </p>
+                {% endif %}
+                {% if event.description %}
+                <p class="mb-0">{{ event.description }}</p>
+                {% endif %}
+            </div>
+        </div>
+        
+        <div class="card">
+            <div class="card-body">
+                <h3 class="mb-4">Upload Your Track</h3>
+                <p class="text-muted">Share your sailing track for this event. All tracks are public and visible to everyone.</p>
+                
+                <form method="post" enctype="multipart/form-data">
+                    {% csrf_token %}
+                    
+                    <div class="mb-3">
+                        <label for="id_gpx_file" class="form-label">Track File <span class="text-danger">*</span></label>
+                        <input type="file" class="form-control {% if form.gpx_file.errors %}is-invalid{% endif %}" 
+                               id="id_gpx_file" name="gpx_file" accept=".gpx,.json" required>
+                        {% for error in form.gpx_file.errors %}
+                        <div class="invalid-feedback">{{ error }}</div>
+                        {% endfor %}
+                        <div class="form-text">Upload a GPX or JSON file from your GPS device or app (max 50MB)</div>
+                    </div>
+                    
+                    <!-- Event name field removed - event already exists -->
+                    
+                    {% if user.is_authenticated %}
+                    <div class="mb-3">
+                        <label for="id_vessel" class="form-label">Vessel (optional)</label>
+                        <select class="form-select" id="id_vessel" name="vessel">
+                            <option value="">-- Select a vessel --</option>
+                            {% for vessel in form.fields.vessel.queryset %}
+                            <option value="{{ vessel.id }}" {% if form.vessel.value == vessel.id|stringformat:"s" %}selected{% endif %}>{{ vessel.name }}</option>
+                            {% endfor %}
+                        </select>
+                        <div class="form-text">Or enter a boat name below (defaults to your last uploaded vessel)</div>
+                    </div>
+                    {% endif %}
+                    
+                    <div class="mb-3">
+                        <label for="id_vessel_name" class="form-label">
+                            Boat Name
+                            {% if is_anonymous %}<span class="text-danger">*</span>{% else %}(optional){% endif %}
+                        </label>
+                        <input type="text" class="form-control {% if form.vessel_name.errors %}is-invalid{% endif %}" 
+                               id="id_vessel_name" name="vessel_name" 
+                               value="{{ form.vessel_name.value|default:'' }}" 
+                               placeholder="e.g., Wind Dancer"
+                               autocomplete="on"
+                               autocapitalize="words"
+                               spellcheck="true"
+                               data-lpignore="false"
+                               list="boat-name-suggestions"
+                               {% if is_anonymous %}required{% endif %}>
+                        <datalist id="boat-name-suggestions">
+                            <!-- Browser will populate this from previous entries with the same name attribute -->
+                        </datalist>
+                        {% for error in form.vessel_name.errors %}
+                        <div class="invalid-feedback">{{ error }}</div>
+                        {% endfor %}
+                        <div class="form-text">
+                            {% if user.is_authenticated %}
+                            Enter a boat name if you didn't select a vessel above
+                            {% else %}
+                            Enter the name of your boat (required). Your browser will remember it for next time.
+                            {% endif %}
+                        </div>
+                    </div>
+                    
+                    <button type="submit" class="btn btn-primary btn-lg w-100">Upload Track</button>
+                </form>
+            </div>
+        </div>
+        
+        {% if is_anonymous %}
+        <div class="card mt-3 border-info">
+            <div class="card-body">
+                <p class="mb-0 text-muted">
+                    <small>💡 <strong>Tip:</strong> After uploading, you can create a free account to manage your tracks and vessels.</small>
+                </p>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+{% if recordings %}
+<div class="row mt-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">Event Tracks Map</h5>
+                <a href="{% url 'tracks:event_map' token=event.share_token %}" class="btn btn-sm btn-outline-primary" target="_blank">
+                    Show Bigger ↗
+                </a>
+            </div>
+            <div class="card-body p-0">
+                <div id="event-map-preview"></div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block extra_js %}
+{% if recordings %}
+<script src="https://cdn.jsdelivr.net/npm/ol@v9.0.0/dist/ol.js"></script>
+<script>
+const eventToken = '{{ event.share_token }}';
+const recordings = [
+    {% for recording in recordings %}
+    {
+        id: '{{ recording.id }}',
+        name: '{{ recording.name|default:recording.vessel.name|default:"Track"|escapejs }}',
+        vessel: '{{ recording.vessel.name|default:"Unknown"|escapejs }}'
+    }{% if not forloop.last %},{% endif %}
+    {% endfor %}
+];
+
+// Initialize map
+const map = new ol.Map({
+    target: 'event-map-preview',
+    layers: [
+        new ol.layer.Tile({
+            source: new ol.source.OSM()
+        })
+    ],
+    view: new ol.View({
+        center: ol.proj.fromLonLat([-118.5, 33.7]),
+        zoom: 10
+    })
+});
+
+// Track layers
+const trackSource = new ol.source.Vector();
+const trackLayer = new ol.layer.Vector({
+    source: trackSource,
+    style: function(feature) {
+        const color = feature.get('color') || '#0066cc';
+        return new ol.style.Style({
+            stroke: new ol.style.Stroke({
+                color: color,
+                width: 2
+            })
+        });
+    }
+});
+map.addLayer(trackLayer);
+
+// Color palette for different tracks
+const colors = ['#0066cc', '#cc0000', '#00cc00', '#cc00cc', '#00cccc', '#cc6600', '#0066cc', '#6600cc'];
+
+// Load all tracks
+async function loadEventTracks() {
+    const promises = recordings.map(async (recording, index) => {
+        try {
+            const response = await fetch(`/api/recordings/${recording.id}/track/?zoom=14`);
+            if (!response.ok) return null;
+            
+            const data = await response.json();
+            if (!data.url) return null;
+            
+            const trackResponse = await fetch(data.url);
+            if (!trackResponse.ok) return null;
+            
+            const trackData = await trackResponse.json();
+            
+            const format = new ol.format.GeoJSON();
+            const feature = format.readFeature(trackData, {
+                featureProjection: 'EPSG:3857'
+            });
+            
+            feature.set('color', colors[index % colors.length]);
+            feature.set('name', recording.name);
+            feature.set('vessel', recording.vessel);
+            
+            return feature;
+        } catch (error) {
+            console.error(`Failed to load track ${recording.id}:`, error);
+            return null;
+        }
+    });
+    
+    const features = (await Promise.all(promises)).filter(f => f !== null);
+    trackSource.clear();
+    features.forEach(f => trackSource.addFeature(f));
+    
+    // Fit to all tracks
+    if (features.length > 0) {
+        const extent = trackSource.getExtent();
+        map.getView().fit(extent, { padding: [20, 20, 20, 20] });
+    }
+}
+
+// Load tracks on page load
+loadEventTracks();
+</script>
+{% endif %}
+{% endblock %}

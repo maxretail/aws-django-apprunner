@@ -23,6 +23,23 @@ STATICFILES_DIRS = [os.path.join(BASE_DIR, 'static')]
 MEDIA_URL = '/media/'
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 
+# Use local filesystem for media files in development
+# Override the base setting to use local storage
+DEFAULT_FILE_STORAGE = 'django.core.files.storage.FileSystemStorage'
+
+# Use console email backend in development
+EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
+
+# Django-Q2 settings for development (smaller cluster)
+Q_CLUSTER = {
+    'name': 'sailarchive-dev',
+    'workers': 1,
+    'timeout': 300,
+    'retry': 360,
+    'queue_limit': 50,
+    'orm': 'default',
+}
+
 # Logging configuration
 LOGGING = {
     'version': 1,
@@ -49,10 +66,15 @@ LOGGING = {
         },
         'apps.core': {
             'handlers': ['console'],
-            'level': 'INFO',
+            'level': 'DEBUG',
             'propagate': False,
         },
-        'config': {
+        'apps.tracks': {
+            'handlers': ['console'],
+            'level': 'DEBUG',
+            'propagate': False,
+        },
+        'django_q': {
             'handlers': ['console'],
             'level': 'INFO',
             'propagate': False,

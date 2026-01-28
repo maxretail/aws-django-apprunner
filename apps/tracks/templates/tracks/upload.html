@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+
+{% block title %}Upload Track - SailArchive{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-8 col-lg-6">
+        <h1 class="mb-4">Upload Track</h1>
+        
+        <div class="card">
+            <div class="card-body">
+                <form method="post" enctype="multipart/form-data">
+                    {% csrf_token %}
+                    
+                    <div class="mb-3">
+                        <label for="id_gpx_file" class="form-label">Track File</label>
+                        <input type="file" class="form-control {% if form.gpx_file.errors %}is-invalid{% endif %}" 
+                               id="id_gpx_file" name="gpx_file" accept=".gpx,.json" required>
+                        {% for error in form.gpx_file.errors %}
+                        <div class="invalid-feedback">{{ error }}</div>
+                        {% endfor %}
+                        <div class="form-text">Upload a GPX or JSON file from your GPS device or app (max 50MB)</div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="id_name" class="form-label">Event Name (optional)</label>
+                        <input type="text" class="form-control" id="id_name" name="name" 
+                               value="{{ form.name.value|default:'' }}" placeholder="e.g., Race Day 2024, Morning Sail">
+                        <div class="form-text">If provided, will create or find an event with this name. All tracks with the same event name will be grouped together.</div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="id_vessel" class="form-label">Vessel (optional)</label>
+                        <select class="form-select" id="id_vessel" name="vessel">
+                            <option value="">-- Select a vessel --</option>
+                            {% for vessel in form.fields.vessel.queryset %}
+                            <option value="{{ vessel.id }}">{{ vessel.name }}</option>
+                            {% endfor %}
+                        </select>
+                        <div class="form-text">
+                            Associate this track with one of your vessels.
+                            <a href="{% url 'tracks:create_vessel' %}">Create a new vessel</a>
+                        </div>
+                    </div>
+                    
+                    <button type="submit" class="btn btn-primary">Upload Track</button>
+                    <a href="{% url 'tracks:recording_list' %}" class="btn btn-outline-secondary">Cancel</a>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

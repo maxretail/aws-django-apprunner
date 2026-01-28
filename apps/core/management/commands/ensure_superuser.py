@@ -12,7 +12,6 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         email = os.environ.get('DJANGO_SUPERUSER_EMAIL', 'devops@example.com')
         password = os.environ.get('DJANGO_SUPERUSER_PASSWORD')
-        username = email  # Use email as username
 
         if not password:
             self.stdout.write(self.style.ERROR('DJANGO_SUPERUSER_PASSWORD environment variable not set'))
@@ -23,7 +22,6 @@ class Command(BaseCommand):
             logger.info(f"User {email} already exists")
         except User.DoesNotExist:
             user = User.objects.create_superuser(
-                username=username,
                 email=email,
                 password=password
             )

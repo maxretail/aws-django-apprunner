@@ -1,11 +1,36 @@
+# Django core
 Django>=4.2,<5.0
 djangorestframework>=3.14.0
+django-extensions>=3.2.0
+
+# Authentication
+django-registration-redux>=2.13
+
+# Database
 psycopg2-binary>=2.9.6
-python-dotenv>=1.0.0
 dj-database-url>=2.0.0
+
+# Async task queue (uses Postgres as broker)
+django-q2>=1.6.0
+
+# GPX parsing and track processing
+gpxpy>=1.6.2
+simplification>=0.7.0
+
+# Image processing (vessel icons)
+Pillow>=10.0.0
+
+# Storage (DO Spaces / S3-compatible)
+django-storages>=1.14.0
+boto3>=1.28.0
+
+# Server
 gunicorn>=21.2.0
 whitenoise>=6.4.0
 uvicorn>=0.24.0
+
+# Utilities
+python-dotenv>=1.0.0
 httpx>=0.25.0
 asgiref>=3.7.0
-requests>=2.31.0 
+requests>=2.31.0

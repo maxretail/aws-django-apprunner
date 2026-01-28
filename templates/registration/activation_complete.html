@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+
+{% block title %}Activation Complete - SailArchive{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-body text-center">
+                <h4 class="text-success mb-3">Account Activated!</h4>
+                <p>Your account has been successfully activated.</p>
+                <p>You can now log in and start uploading your tracks.</p>
+                <a href="{% url 'auth_login' %}" class="btn btn-primary">Login Now</a>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

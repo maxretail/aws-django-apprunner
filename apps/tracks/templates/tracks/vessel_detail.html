@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+
+{% block title %}{{ vessel.name }} - SailArchive{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="{% url 'tracks:vessel_list' %}">My Vessels</a></li>
+        <li class="breadcrumb-item active">{{ vessel.name }}</li>
+    </ol>
+</nav>
+
+<div class="row">
+    <div class="col-lg-8">
+        <h1>{{ vessel.name }}</h1>
+        
+        <h5 class="mt-4 mb-3">Recordings</h5>
+        {% if recordings %}
+        <div class="list-group">
+            {% for recording in recordings %}
+            <a href="{% url 'tracks:recording_detail' pk=recording.pk %}" class="list-group-item list-group-item-action">
+                <div class="d-flex justify-content-between">
+                    <span>{{ recording.name|default:"Untitled" }}</span>
+                    <small class="text-muted">{{ recording.start_time|date:"M d, Y" }}</small>
+                </div>
+                {% if recording.distance_nm %}
+                <small class="text-muted">{{ recording.distance_nm }} nm</small>
+                {% endif %}
+            </a>
+            {% endfor %}
+        </div>
+        {% else %}
+        <p class="text-muted">No recordings for this vessel yet.</p>
+        {% endif %}
+    </div>
+    
+    <div class="col-lg-4">
+        <div class="card">
+            <div class="card-header">Vessel Details</div>
+            <ul class="list-group list-group-flush">
+                {% if vessel.sail_number %}
+                <li class="list-group-item">
+                    <small class="text-muted">Sail Number</small><br>
+                    {{ vessel.sail_number }}
+                </li>
+                {% endif %}
+                {% if vessel.model_info %}
+                <li class="list-group-item">
+                    <small class="text-muted">Model</small><br>
+                    {{ vessel.model_info }}
+                </li>
+                {% endif %}
+                {% if vessel.mmsi %}
+                <li class="list-group-item">
+                    <small class="text-muted">MMSI</small><br>
+                    {{ vessel.mmsi }}
+                </li>
+                {% endif %}
+            </ul>
+        </div>
+        
+        {% if has_access %}
+        <div class="mt-3">
+            <a href="{% url 'tracks:upload_gpx' %}" class="btn btn-primary w-100">Upload Track</a>
+        </div>
+        {% else %}
+        <div class="mt-3">
+            <a href="{% url 'tracks:claim_vessel' %}" class="btn btn-outline-primary w-100">Claim This Vessel</a>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

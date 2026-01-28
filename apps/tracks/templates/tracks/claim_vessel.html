@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+
+{% block title %}Claim Vessel - SailArchive{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-8 col-lg-6">
+        <h1 class="mb-4">Claim a Vessel</h1>
+        
+        <p class="text-muted mb-4">
+            If your vessel already exists in our system, you can claim it to upload tracks. 
+            Your claim will be reviewed by an administrator.
+        </p>
+        
+        <div class="card">
+            <div class="card-body">
+                <form method="post">
+                    {% csrf_token %}
+                    
+                    <div class="mb-3">
+                        <label for="id_vessel" class="form-label">Select Vessel</label>
+                        <select class="form-select {% if form.vessel.errors %}is-invalid{% endif %}" 
+                                id="id_vessel" name="vessel" required>
+                            <option value="">-- Select a vessel --</option>
+                            {% for vessel in form.fields.vessel.queryset %}
+                            <option value="{{ vessel.id }}">
+                                {{ vessel.name }}{% if vessel.sail_number %} ({{ vessel.sail_number }}){% endif %}
+                            </option>
+                            {% endfor %}
+                        </select>
+                        {% for error in form.vessel.errors %}
+                        <div class="invalid-feedback">{{ error }}</div>
+                        {% endfor %}
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="id_notes" class="form-label">Notes (optional)</label>
+                        <textarea class="form-control" id="id_notes" name="notes" rows="3"
+                                  placeholder="Explain your connection to this vessel..."></textarea>
+                        <div class="form-text">Help the admin verify your claim</div>
+                    </div>
+                    
+                    <button type="submit" class="btn btn-primary">Submit Claim</button>
+                    <a href="{% url 'tracks:vessel_list' %}" class="btn btn-outline-secondary">Cancel</a>
+                </form>
+            </div>
+        </div>
+        
+        <div class="text-center mt-4">
+            <p>Can't find your vessel? <a href="{% url 'tracks:create_vessel' %}">Create a new one</a></p>
+        </div>
+    </div>
+</div>
+{% endblock %}

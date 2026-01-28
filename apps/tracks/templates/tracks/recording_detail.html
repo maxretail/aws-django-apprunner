@@ -1,0 +1,148 @@
+{% extends "base.html" %}
+{% load humanize %}
+
+{% block title %}{{ recording.event.name|default:recording.vessel.name|default:"Recording" }} - SailArchive{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-lg-8">
+        <nav aria-label="breadcrumb">
+            <ol class="breadcrumb">
+                <li class="breadcrumb-item"><a href="{% url 'tracks:recording_list' %}">My Recordings</a></li>
+                <li class="breadcrumb-item active">{{ recording.event.name|default:recording.vessel.name|default:"Recording" }}</li>
+            </ol>
+        </nav>
+        
+        <h1>{{ recording.event.name|default:recording.vessel.name|default:"Recording" }}</h1>
+        
+        {% if recording.event %}
+        <p class="text-muted">
+            <a href="{% url 'tracks:upload_to_event' token=recording.event.share_token %}">View Event</a>
+            {% if recording.event.recordings.count > 1 %}
+            | <a href="{% url 'tracks:event_map' token=recording.event.share_token %}">View Map</a>
+            {% endif %}
+        </p>
+        {% endif %}
+        
+        {% if recording.status == 'processing' %}
+        <div class="alert alert-info" id="processing-alert">
+            <div class="d-flex align-items-center">
+                <div class="spinner-border spinner-border-sm me-2" role="status"></div>
+                <span>Your track is being processed. This page will update automatically.</span>
+            </div>
+        </div>
+        {% elif recording.status == 'failed' %}
+        <div class="alert alert-danger">
+            <strong>Processing failed:</strong> {{ recording.error_message|default:"Unknown error" }}
+        </div>
+        {% elif recording.status == 'ready' %}
+        
+        {% if overlapping_events and overlapping_events.exists %}
+        <div class="alert alert-warning" id="overlapping-events-alert">
+            <h5 class="alert-heading">Similar Event{{ overlapping_events|length|pluralize }} Found</h5>
+            <p>We found event{{ overlapping_events|length|pluralize }} with tracks that overlap in location and time:</p>
+            <div class="mb-3">
+                {% for event in overlapping_events %}
+                <div class="card mb-2">
+                    <div class="card-body py-2">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <div>
+                                <strong>{{ event.name }}</strong><br>
+                                <small class="text-muted">
+                                    {{ event.date|date:"F d, Y" }} - 
+                                    {{ event.recordings.count }} track{{ event.recordings.count|pluralize }}
+                                </small>
+                            </div>
+                            <form method="post" action="{% url 'tracks:merge_event' pk=recording.pk %}" class="d-inline">
+                                {% csrf_token %}
+                                <input type="hidden" name="target_event_id" value="{{ event.id }}">
+                                <button type="submit" class="btn btn-sm btn-warning" name="action" value="merge">
+                                    Merge into this event
+                                </button>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            <p class="mb-0">
+                <small>Is this the same event? Click "Merge" to combine your track with the existing event, or 
+                <button type="button" class="btn btn-link btn-sm p-0" onclick="document.getElementById('overlapping-events-alert').style.display='none'">
+                    dismiss
+                </button> to keep them separate.</small>
+            </p>
+        </div>
+        {% endif %}
+        <div class="card mb-4">
+            <div class="card-body">
+                <a href="{% url 'tracks:recording_map' pk=recording.pk %}" class="btn btn-primary btn-lg">
+                    View on Map
+                </a>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+    
+    <div class="col-lg-4">
+        <div class="card">
+            <div class="card-header">Details</div>
+            <ul class="list-group list-group-flush">
+                {% if recording.event %}
+                <li class="list-group-item">
+                    <small class="text-muted">Event</small><br>
+                    <a href="{% url 'tracks:upload_to_event' token=recording.event.share_token %}">{{ recording.event.name }}</a>
+                </li>
+                {% endif %}
+                {% if recording.vessel %}
+                <li class="list-group-item">
+                    <small class="text-muted">Vessel</small><br>
+                    <a href="{% url 'tracks:vessel_detail' pk=recording.vessel.pk %}">{{ recording.vessel.name }}</a>
+                </li>
+                {% endif %}
+                {% if recording.start_time %}
+                <li class="list-group-item">
+                    <small class="text-muted">Date</small><br>
+                    {{ recording.start_time|date:"F d, Y" }}
+                </li>
+                <li class="list-group-item">
+                    <small class="text-muted">Time</small><br>
+                    {{ recording.start_time|time:"H:i" }} - {{ recording.end_time|time:"H:i" }}
+                </li>
+                {% endif %}
+                {% if recording.distance_nm %}
+                <li class="list-group-item">
+                    <small class="text-muted">Distance</small><br>
+                    {{ recording.distance_nm }} nm
+                </li>
+                {% endif %}
+                {% if recording.point_count %}
+                <li class="list-group-item">
+                    <small class="text-muted">Track Points</small><br>
+                    {{ recording.point_count|intcomma }}
+                </li>
+                {% endif %}
+                <li class="list-group-item">
+                    <small class="text-muted">Visibility</small><br>
+                    <span class="badge bg-secondary">{{ recording.visibility }}</span>
+                </li>
+            </ul>
+        </div>
+    </div>
+</div>
+
+{% if recording.status == 'processing' %}
+<script>
+// Poll for status updates
+function checkStatus() {
+    fetch('{% url "tracks:recording_status" pk=recording.pk %}')
+        .then(response => response.json())
+        .then(data => {
+            if (data.status !== 'processing') {
+                window.location.reload();
+            }
+        });
+}
+setInterval(checkStatus, 3000);
+</script>
+{% endif %}
+{% endblock %}

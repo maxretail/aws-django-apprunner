@@ -42,6 +42,14 @@ class SimpleApiKeyMiddleware:
             # Check if path matches exactly or starts with the path followed by '/'
             if request.path == exempt_path or request.path.startswith(exempt_path + '/'):
                 return self.get_response(request)
+        
+        # Exclude event upload and map URLs (allow anonymous access)
+        if request.path.startswith('/events/') and ('/upload/' in request.path or '/map/' in request.path):
+            return self.get_response(request)
+        
+        # Exclude track API endpoint for public recordings (allow anonymous access)
+        if request.path.startswith('/api/recordings/') and '/track/' in request.path:
+            return self.get_response(request)
 
         # Already authenticated
         if request.user.is_authenticated:

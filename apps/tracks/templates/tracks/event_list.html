@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% load humanize %}
+
+{% block title %}Events - SailArchive{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <h1 class="mb-4">Events</h1>
+        
+        {% if is_authenticated %}
+        <p class="text-muted mb-4">Events you've uploaded tracks to:</p>
+        {% else %}
+        <p class="text-muted mb-4">Recent public events:</p>
+        {% endif %}
+        
+        {% if events %}
+        <div class="row">
+            {% for event in events %}
+            <div class="col-md-6 col-lg-4 mb-4">
+                <div class="card h-100">
+                    <div class="card-header bg-primary text-white">
+                        <h5 class="mb-0">{{ event.name }}</h5>
+                    </div>
+                    <div class="card-body">
+                        <p class="text-muted mb-2">
+                            <strong>Date:</strong> {{ event.date|date:"F d, Y" }}
+                        </p>
+                        {% if event.event_type %}
+                        <p class="text-muted mb-2">
+                            <strong>Type:</strong> {{ event.get_event_type_display }}
+                        </p>
+                        {% endif %}
+                        {% if event.description %}
+                        <p class="mb-3">{{ event.description|truncatewords:20 }}</p>
+                        {% endif %}
+                        <div class="mb-2">
+                            <small class="text-muted">
+                                {{ event.recordings.count }} track{{ event.recordings.count|pluralize }}
+                            </small>
+                        </div>
+                    </div>
+                    <div class="card-footer bg-transparent">
+                        <div class="d-grid gap-2">
+                            <a href="{% url 'tracks:upload_to_event' token=event.share_token %}" class="btn btn-primary btn-sm">
+                                Upload Track
+                            </a>
+                            {% if event.recordings.count > 0 %}
+                            <a href="{% url 'tracks:event_map' token=event.share_token %}" class="btn btn-outline-secondary btn-sm">
+                                View Map
+                            </a>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="alert alert-info">
+            {% if is_authenticated %}
+            <p class="mb-0">You haven't uploaded tracks to any events yet. Get started by uploading a track to an event!</p>
+            {% else %}
+            <p class="mb-0">No events available. <a href="{% url 'auth_login' %}">Login</a> or <a href="{% url 'registration_register' %}">register</a> to see events you've participated in.</p>
+            {% endif %}
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

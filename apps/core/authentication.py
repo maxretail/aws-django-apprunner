@@ -72,7 +72,6 @@ class SimpleApiKeyAuthentication(BaseAuthentication):
                 if not user:
                     # Create a default user if none exists
                     user = User.objects.create_superuser(
-                        username='admin',
                         email='admin@example.com',
                         password='temppw123!'
                     )

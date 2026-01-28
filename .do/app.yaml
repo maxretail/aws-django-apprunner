@@ -1,0 +1,73 @@
+name: sailarchive
+region: sfo3
+services:
+- name: web
+  source_dir: /
+  dockerfile_path: Dockerfile
+  instance_count: 1
+  instance_size_slug: basic-xxs
+  http_port: 8000
+  routes:
+  - path: /
+  envs:
+  - key: DJANGO_SETTINGS_MODULE
+    value: config.settings.production
+  - key: DEBUG
+    value: "0"
+  - key: DJANGO_SECRET_KEY
+    value: ${DJANGO_SECRET_KEY}
+  - key: DB_HOST
+    value: ${db.HOSTNAME}
+  - key: DB_PORT
+    value: ${db.PORT}
+  - key: DB_NAME
+    value: ${db.DATABASE}
+  - key: DB_USER
+    value: ${db.USERNAME}
+  - key: DB_PASSWORD
+    value: ${db.PASSWORD}
+  - key: CSRF_TRUSTED_ORIGINS
+    value: ${APP_URL}
+  - key: DJANGO_SUPERUSER_EMAIL
+    value: ${DJANGO_SUPERUSER_EMAIL}
+  - key: DJANGO_SUPERUSER_PASSWORD
+    value: ${DJANGO_SUPERUSER_PASSWORD}
+  # DigitalOcean Spaces (for track files and media)
+  - key: DO_SPACES_KEY
+    value: ${DO_SPACES_KEY}
+  - key: DO_SPACES_SECRET
+    value: ${DO_SPACES_SECRET}
+  - key: DO_SPACES_NAME
+    value: ${DO_SPACES_NAME}
+  - key: DO_SPACES_ENDPOINT
+    value: ${DO_SPACES_ENDPOINT}
+  - key: DO_SPACES_REGION
+    value: ${DO_SPACES_REGION}
+  # Email Configuration (optional)
+  - key: EMAIL_HOST
+    value: ${EMAIL_HOST}
+  - key: EMAIL_PORT
+    value: ${EMAIL_PORT}
+  - key: EMAIL_USE_TLS
+    value: ${EMAIL_USE_TLS}
+  - key: EMAIL_HOST_USER
+    value: ${EMAIL_HOST_USER}
+  - key: EMAIL_HOST_PASSWORD
+    value: ${EMAIL_HOST_PASSWORD}
+  - key: DEFAULT_FROM_EMAIL
+    value: ${DEFAULT_FROM_EMAIL}
+  health_check:
+    http_path: /health/
+    initial_delay_seconds: 30
+    period_seconds: 10
+    timeout_seconds: 5
+    success_threshold: 1
+    failure_threshold: 3
+
+databases:
+- name: db
+  engine: PG
+  production: false
+  cluster_name: sailarchive-db
+  db_name: sailarchive
+  db_user: sailarchive

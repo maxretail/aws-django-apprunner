@@ -26,7 +26,13 @@ local_settings.py
 db.sqlite3
 db.sqlite3-journal
 media/
-static/
+staticfiles/
+
+# Static files - keep source, ignore generated
+static/frontend/*.js
+static/frontend/*.css
+static/frontend/*.map
+!static/frontend/.gitkeep
 
 # Virtual Environment
 venv/
@@ -43,10 +49,15 @@ env/
 .DS_Store
 Thumbs.db
 
-# AWS
-.cdk.staging/
-cdk.out/
-cdk-outputs.json
+# Node (for frontend)
+node_modules/
+frontend/node_modules/
+frontend/dist/
 
 # Secrets
-.secrets/ 
+.secrets/
+.env.local
+
+# Temp files
+*.tmp
+/tmp/

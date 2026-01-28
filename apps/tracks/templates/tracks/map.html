@@ -1,0 +1,597 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}{{ recording.name|default:"Track Map" }} - SailArchive{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ol@v9.0.0/ol.css">
+<style>
+    #map {
+        width: 100%;
+        height: calc(100vh - 200px);
+        min-height: 400px;
+    }
+    .map-controls {
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        z-index: 1000;
+        background: white;
+        padding: 10px;
+        border-radius: 4px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+    }
+    .playback-controls {
+        position: absolute;
+        bottom: 10px;
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 1000;
+        background: white;
+        padding: 15px 20px;
+        border-radius: 8px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+        display: flex;
+        align-items: center;
+        gap: 15px;
+    }
+    .playback-buttons {
+        display: flex;
+        gap: 8px;
+    }
+    .playback-buttons button {
+        width: 40px;
+        height: 40px;
+        border: none;
+        border-radius: 50%;
+        background: #0066cc;
+        color: white;
+        font-size: 16px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: background 0.2s;
+    }
+    .playback-buttons button:hover {
+        background: #0052a3;
+    }
+    .playback-buttons button:disabled {
+        background: #ccc;
+        cursor: not-allowed;
+    }
+    .playback-time {
+        font-family: monospace;
+        font-size: 16px;
+        font-weight: 500;
+        min-width: 200px;
+        text-align: center;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h4 class="mb-0">{{ recording.name|default:"Track Map" }}</h4>
+    <a href="{% url 'tracks:recording_detail' pk=recording.pk %}" class="btn btn-outline-secondary btn-sm">
+        Back to Details
+    </a>
+</div>
+
+<div class="position-relative">
+    <div id="map"></div>
+    <div class="map-controls">
+        <div class="mb-2">
+            <strong>Track Info</strong>
+        </div>
+        <div id="track-info">
+            <small class="text-muted">Loading...</small>
+        </div>
+    </div>
+    <div class="playback-controls">
+        <div class="playback-buttons">
+            <button id="play-pause-btn" title="Play/Pause">▶</button>
+            <button id="stop-btn" title="Stop">⏹</button>
+        </div>
+        <div class="playback-time" id="playback-time">
+            --:--:--
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/ol@v9.0.0/dist/ol.js"></script>
+<script>
+const recordingId = '{{ recording.id }}';
+
+// Initialize map
+const map = new ol.Map({
+    target: 'map',
+    layers: [
+        new ol.layer.Tile({
+            source: new ol.source.OSM()
+        })
+    ],
+    view: new ol.View({
+        center: ol.proj.fromLonLat([-118.5, 33.7]),  // Default to SoCal
+        zoom: 10
+    })
+});
+
+// Track layer
+const trackSource = new ol.source.Vector();
+const trackLayer = new ol.layer.Vector({
+    source: trackSource,
+    style: function(feature) {
+        return new ol.style.Style({
+            stroke: new ol.style.Stroke({
+                color: '#0066cc',
+                width: 3
+            })
+        });
+    }
+});
+map.addLayer(trackLayer);
+
+// Marker layer for current position during playback
+const markerSource = new ol.source.Vector();
+const markerLayer = new ol.layer.Vector({
+    source: markerSource,
+    style: new ol.style.Style({
+        image: new ol.style.Circle({
+            radius: 8,
+            fill: new ol.style.Fill({
+                color: '#ff0000'
+            }),
+            stroke: new ol.style.Stroke({
+                color: '#ffffff',
+                width: 2
+            })
+        })
+    })
+});
+map.addLayer(markerLayer);
+
+// Track if this is the initial load
+let isInitialLoad = true;
+let currentTrackZoom = null;
+
+// Playback state
+const playbackState = {
+    isPlaying: false,
+    isPaused: false,
+    currentTime: 0, // seconds from start
+    startTimestamp: null, // first point timestamp (epoch)
+    endTimestamp: null, // last point timestamp (epoch)
+    playbackSpeed: 1.0, // multiplier for playback speed
+    animationFrame: null,
+    startPlayTime: null, // when playback started (real time)
+    trackPoints: [], // array of {lon, lat, timestamp, speed}
+    timezone: null, // timezone string for the track location
+    fullTrackFeature: null // original full track feature
+};
+
+// Get timezone from coordinates using a simple approximation
+function getTimezoneFromCoordinates(lon, lat) {
+    // Simple timezone approximation based on longitude
+    // Each timezone is roughly 15 degrees wide
+    const timezoneOffset = Math.round(lon / 15);
+    
+    // Common timezone mappings (UTC offsets)
+    const timezoneMap = {
+        '-12': 'Etc/GMT+12',
+        '-11': 'Pacific/Midway',
+        '-10': 'Pacific/Honolulu',
+        '-9': 'America/Anchorage',
+        '-8': 'America/Los_Angeles',
+        '-7': 'America/Denver',
+        '-6': 'America/Chicago',
+        '-5': 'America/New_York',
+        '-4': 'America/Halifax',
+        '-3': 'America/Sao_Paulo',
+        '-2': 'Atlantic/South_Georgia',
+        '-1': 'Atlantic/Azores',
+        '0': 'UTC',
+        '1': 'Europe/Paris',
+        '2': 'Europe/Athens',
+        '3': 'Europe/Moscow',
+        '4': 'Asia/Dubai',
+        '5': 'Asia/Karachi',
+        '6': 'Asia/Dhaka',
+        '7': 'Asia/Bangkok',
+        '8': 'Asia/Shanghai',
+        '9': 'Asia/Tokyo',
+        '10': 'Australia/Sydney',
+        '11': 'Pacific/Guadalcanal',
+        '12': 'Pacific/Auckland'
+    };
+    
+    const tzKey = timezoneOffset.toString();
+    return timezoneMap[tzKey] || 'UTC';
+}
+
+// Format time in local timezone
+function formatPlaybackTime(timestamp) {
+    if (!timestamp || !playbackState.timezone) {
+        return '--:--:--';
+    }
+    
+    try {
+        const date = new Date(timestamp * 1000);
+        const formatter = new Intl.DateTimeFormat('en-US', {
+            timeZone: playbackState.timezone,
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: false
+        });
+        return formatter.format(date);
+    } catch (e) {
+        // Fallback to UTC if timezone is invalid
+        const date = new Date(timestamp * 1000);
+        return date.toISOString().substr(11, 8);
+    }
+}
+
+// Extract track points with timestamps from GeoJSON
+function extractTrackPoints(trackData) {
+    const coordinates = trackData.geometry.coordinates;
+    const points = [];
+    
+    for (const coord of coordinates) {
+        // Coordinates format: [lon, lat, timestamp_epoch, speed]
+        if (coord.length >= 3 && coord[2] != null) {
+            points.push({
+                lon: coord[0],
+                lat: coord[1],
+                timestamp: coord[2], // epoch timestamp
+                speed: coord[3] || 0
+            });
+        }
+    }
+    
+    return points;
+}
+
+// Update playback time display
+function updatePlaybackTimeDisplay() {
+    if (!playbackState.startTimestamp) {
+        document.getElementById('playback-time').textContent = '--:--:--';
+        return;
+    }
+    
+    const currentTimestamp = playbackState.startTimestamp + playbackState.currentTime;
+    const formattedTime = formatPlaybackTime(currentTimestamp);
+    document.getElementById('playback-time').textContent = formattedTime;
+}
+
+// Update marker position
+function updateMarkerPosition() {
+    if (playbackState.trackPoints.length === 0) {
+        markerSource.clear();
+        return;
+    }
+    
+    const currentTimestamp = playbackState.startTimestamp + playbackState.currentTime;
+    
+    // Find the point closest to current time
+    let currentPoint = null;
+    for (let i = 0; i < playbackState.trackPoints.length; i++) {
+        const point = playbackState.trackPoints[i];
+        if (point.timestamp <= currentTimestamp) {
+            currentPoint = point;
+        } else {
+            break;
+        }
+    }
+    
+    // If no point found, use first point
+    if (!currentPoint && playbackState.trackPoints.length > 0) {
+        currentPoint = playbackState.trackPoints[0];
+    }
+    
+    if (currentPoint) {
+        markerSource.clear();
+        const marker = new ol.Feature({
+            geometry: new ol.geom.Point(
+                ol.proj.fromLonLat([currentPoint.lon, currentPoint.lat])
+            )
+        });
+        markerSource.addFeature(marker);
+    }
+}
+
+// Update track display to show only points up to current time
+function updateTrackDisplay() {
+    if (!playbackState.fullTrackFeature || playbackState.trackPoints.length === 0) {
+        return;
+    }
+    
+    const currentTimestamp = playbackState.startTimestamp + playbackState.currentTime;
+    
+    // Filter coordinates up to current time
+    const filteredCoords = [];
+    for (const point of playbackState.trackPoints) {
+        if (point.timestamp <= currentTimestamp) {
+            filteredCoords.push([point.lon, point.lat]);
+        } else {
+            break;
+        }
+    }
+    
+    // Update track feature
+    trackSource.clear();
+    if (filteredCoords.length > 1) {
+        // Project coordinates to map projection (EPSG:3857)
+        const projectedCoords = filteredCoords.map(coord => ol.proj.fromLonLat(coord));
+        const lineString = new ol.geom.LineString(projectedCoords);
+        const feature = new ol.Feature({
+            geometry: lineString
+        });
+        trackSource.addFeature(feature);
+    } else if (filteredCoords.length === 1) {
+        // Single point - show as point feature
+        const projectedCoord = ol.proj.fromLonLat(filteredCoords[0]);
+        const point = new ol.geom.Point(projectedCoord);
+        const feature = new ol.Feature({
+            geometry: point
+        });
+        trackSource.addFeature(feature);
+    }
+}
+
+// Playback animation loop
+function playbackAnimation() {
+    if (!playbackState.isPlaying) {
+        return;
+    }
+    
+    const now = Date.now();
+    const elapsed = (now - playbackState.startPlayTime) / 1000; // seconds
+    playbackState.currentTime = elapsed * playbackState.playbackSpeed;
+    
+    // Check if we've reached the end
+    const totalDuration = playbackState.endTimestamp - playbackState.startTimestamp;
+    if (playbackState.currentTime >= totalDuration) {
+        playbackState.currentTime = totalDuration;
+        stopPlayback();
+        return;
+    }
+    
+    // Update display
+    updatePlaybackTimeDisplay();
+    updateMarkerPosition();
+    updateTrackDisplay();
+    
+    // Continue animation
+    playbackState.animationFrame = requestAnimationFrame(playbackAnimation);
+}
+
+// Start playback
+function startPlayback() {
+    if (playbackState.trackPoints.length === 0) {
+        return;
+    }
+    
+    playbackState.isPlaying = true;
+    playbackState.isPaused = false;
+    playbackState.startPlayTime = Date.now() - (playbackState.currentTime * 1000 / playbackState.playbackSpeed);
+    
+    document.getElementById('play-pause-btn').textContent = '⏸';
+    document.getElementById('play-pause-btn').title = 'Pause';
+    document.getElementById('stop-btn').disabled = false;
+    
+    playbackAnimation();
+}
+
+// Pause playback
+function pausePlayback() {
+    playbackState.isPlaying = false;
+    playbackState.isPaused = true;
+    
+    if (playbackState.animationFrame) {
+        cancelAnimationFrame(playbackState.animationFrame);
+        playbackState.animationFrame = null;
+    }
+    
+    document.getElementById('play-pause-btn').textContent = '▶';
+    document.getElementById('play-pause-btn').title = 'Play';
+}
+
+// Stop playback
+function stopPlayback() {
+    playbackState.isPlaying = false;
+    playbackState.isPaused = false;
+    playbackState.currentTime = 0;
+    
+    if (playbackState.animationFrame) {
+        cancelAnimationFrame(playbackState.animationFrame);
+        playbackState.animationFrame = null;
+    }
+    
+    document.getElementById('play-pause-btn').textContent = '▶';
+    document.getElementById('play-pause-btn').title = 'Play';
+    document.getElementById('stop-btn').disabled = true;
+    
+    // Reset display
+    updatePlaybackTimeDisplay();
+    markerSource.clear();
+    
+    // Restore full track
+    if (playbackState.fullTrackFeature) {
+        trackSource.clear();
+        trackSource.addFeature(playbackState.fullTrackFeature);
+    }
+}
+
+// Setup playback controls
+document.getElementById('play-pause-btn').addEventListener('click', function() {
+    if (playbackState.isPlaying) {
+        pausePlayback();
+    } else {
+        startPlayback();
+    }
+});
+
+document.getElementById('stop-btn').addEventListener('click', function() {
+    stopPlayback();
+});
+
+// Initialize button states
+document.getElementById('play-pause-btn').disabled = true;
+document.getElementById('stop-btn').disabled = true;
+
+// Get appropriate zoom level for API (returns actual zoom number, not zoom level string)
+function getZoomLevelForAPI() {
+    const zoom = map.getView().getZoom();
+    if (!zoom) return 14;  // Default
+    
+    // Return the actual zoom level - the backend will map it to z6/z10/z14/z18/raw
+    return Math.round(zoom);
+}
+
+// Load track data
+async function loadTrack(fitToExtent = false) {
+    const zoom = getZoomLevelForAPI();
+    
+    // Don't reload if we already have this zoom level (avoid unnecessary reloads)
+    if (!fitToExtent && currentTrackZoom === zoom) {
+        return;
+    }
+    
+    try {
+        // Get signed URL from API
+        const response = await fetch(`/api/recordings/${recordingId}/track/?zoom=${zoom}`);
+        if (!response.ok) {
+            throw new Error(`API error: ${response.status}`);
+        }
+        
+        const data = await response.json();
+        
+        if (data.url) {
+            // Fetch track data from S3
+            const trackResponse = await fetch(data.url);
+            if (!trackResponse.ok) {
+                throw new Error(`Failed to fetch track: ${trackResponse.status}`);
+            }
+            
+            const trackData = await trackResponse.json();
+            
+            // Save current center and zoom before clearing
+            const currentCenter = map.getView().getCenter();
+            const currentZoom = map.getView().getZoom();
+            
+            // Extract track points for playback
+            playbackState.trackPoints = extractTrackPoints(trackData);
+            
+            // Determine timezone from first point
+            if (playbackState.trackPoints.length > 0) {
+                const firstPoint = playbackState.trackPoints[0];
+                playbackState.timezone = getTimezoneFromCoordinates(firstPoint.lon, firstPoint.lat);
+                
+                // Set start and end timestamps
+                playbackState.startTimestamp = playbackState.trackPoints[0].timestamp;
+                playbackState.endTimestamp = playbackState.trackPoints[playbackState.trackPoints.length - 1].timestamp;
+            }
+            
+            // Stop any ongoing playback
+            stopPlayback();
+            
+            // Clear existing features
+            trackSource.clear();
+            
+            // Create feature from GeoJSON
+            const format = new ol.format.GeoJSON();
+            const feature = format.readFeature(trackData, {
+                featureProjection: 'EPSG:3857'
+            });
+            
+            // Store full track feature for restoration
+            playbackState.fullTrackFeature = feature.clone();
+            
+            trackSource.addFeature(feature);
+            
+            // Only fit view on initial load or if explicitly requested
+            if (fitToExtent || isInitialLoad) {
+                const extent = trackSource.getExtent();
+                map.getView().fit(extent, { padding: [50, 50, 50, 50] });
+                isInitialLoad = false;
+            } else {
+                // Restore the view position after updating the track
+                map.getView().setCenter(currentCenter);
+                map.getView().setZoom(currentZoom);
+            }
+            
+            currentTrackZoom = zoom;
+            
+            // Update info
+            const props = trackData.properties || {};
+            const duration = playbackState.endTimestamp && playbackState.startTimestamp 
+                ? Math.round(playbackState.endTimestamp - playbackState.startTimestamp) 
+                : null;
+            const durationStr = duration ? `${Math.floor(duration / 60)}:${String(duration % 60).padStart(2, '0')}` : 'N/A';
+            
+            document.getElementById('track-info').innerHTML = `
+                <small>
+                    Points: ${props.point_count || 'N/A'}<br>
+                    Distance: ${props.distance_nm || 'N/A'} nm<br>
+                    Duration: ${durationStr}<br>
+                    Zoom level: ${data.zoom_level}
+                </small>
+            `;
+            
+            // Initialize playback time display (show start time)
+            playbackState.currentTime = 0;
+            updatePlaybackTimeDisplay();
+            
+            // Enable playback controls if we have valid track points with timestamps
+            if (playbackState.trackPoints.length > 0 && playbackState.startTimestamp && playbackState.endTimestamp) {
+                document.getElementById('play-pause-btn').disabled = false;
+            } else {
+                document.getElementById('play-pause-btn').disabled = true;
+            }
+        }
+    } catch (error) {
+        console.error('Failed to load track:', error);
+        document.getElementById('track-info').innerHTML = `
+            <small class="text-danger">Failed to load track: ${error.message}</small>
+        `;
+    }
+}
+
+// Load track on page load
+loadTrack(true);  // Fit to extent on initial load
+
+// Reload track when zoom changes significantly (with debouncing)
+let lastZoomLevel = getZoomLevelForAPI();
+let zoomChangeTimeout = null;
+
+map.getView().on('change:resolution', function() {
+    // Debounce zoom changes to avoid too many requests
+    if (zoomChangeTimeout) {
+        clearTimeout(zoomChangeTimeout);
+    }
+    
+    zoomChangeTimeout = setTimeout(function() {
+        const newZoomLevel = getZoomLevelForAPI();
+        // Only reload if zoom level changed significantly (different zoom bucket)
+        const getZoomBucket = (z) => {
+            if (z <= 6) return 'z6';
+            if (z <= 10) return 'z10';
+            if (z <= 14) return 'z14';
+            if (z <= 18) return 'z18';
+            return 'raw';
+        };
+        
+        const lastBucket = getZoomBucket(lastZoomLevel);
+        const newBucket = getZoomBucket(newZoomLevel);
+        
+        if (newBucket !== lastBucket) {
+            lastZoomLevel = newZoomLevel;
+            loadTrack(false);  // Don't fit to extent, preserve view position
+        }
+    }, 300);  // Wait 300ms after zoom stops changing
+});
+</script>
+{% endblock %}

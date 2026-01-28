@@ -8,7 +8,7 @@ echo "Waiting for database to be ready..."
 max_retries=30
 retry_count=0
 
-while ! nc -z $DB_HOST $DB_PORT; do
+while ! nc -z ${DB_HOST:-localhost} ${DB_PORT:-5432}; do
     retry_count=$((retry_count+1))
     if [ $retry_count -ge $max_retries ]; then
         echo "Error: Could not connect to database after $max_retries attempts"
@@ -20,60 +20,23 @@ done
 
 echo "Database is ready!"
 
-# Retrieve AWS secrets in production mode
-if [ "$DEBUG" != "1" ]; then
-    echo "Production mode detected. Retrieving AWS secrets..."
-    
-    # Check if APP_NAME is provided
-    if [ -z "$APP_NAME" ]; then
-        echo "Error: APP_NAME environment variable is required in production mode"
-        exit 1
-    fi
-    
-    echo "Retrieving secrets for prefix $APP_NAME..."
-    
-    # Get secrets from AWS Secrets Manager and set as environment variables
-    SECRETS=$(aws secretsmanager list-secrets --filters Key=name,Values=$APP_NAME --query "SecretList[*].Name" --output text)
-    
-    for SECRET_NAME in $SECRETS; do
-        echo "Processing secret: $SECRET_NAME"
-        SECRET_VALUE=$(aws secretsmanager get-secret-value --secret-id $SECRET_NAME --query SecretString --output text)
-        
-        # Parse JSON and set each key-value pair as environment variable
-        echo "Setting environment variables from secret..."
-        while IFS="=" read -r key value; do
-            # Skip empty lines
-            if [ -z "$key" ]; then
-                continue
-            fi
-            
-            # Try to process this environment variable
-            echo "Processing: $key"
-            {
-                # Remove quotes and any trailing comma from value
-                value=$(echo "$value" | sed -e 's/^"//' -e 's/"$//' -e 's/,$//')
-                key=$(echo "$key" | sed -e 's/^"//' -e 's/"$//' -e 's/[[:space:]]*$//')
-                
-                if [ ! -z "$key" ]; then
-                    echo "Setting $key"
-                    export "$key"="$value"
-                    echo "Successfully set $key"
-                else
-                    echo "Warning: Empty key found, skipping"
-                fi
-            } || {
-                echo "Warning: Failed to process environment variable $key, continuing with others"
-            }
-        done < <(echo "$SECRET_VALUE" | jq -r 'to_entries | .[] | "\(.key)=\(.value)"' 2>/dev/null || echo "ERROR_PARSING_JSON=true")
-        
-        # Check if we had a JSON parsing error
-        if [ "$ERROR_PARSING_JSON" = "true" ]; then
-            echo "Warning: Failed to parse secret JSON for $SECRET_NAME, but continuing with other secrets"
-        fi
-    done
-    
-    echo "AWS secrets loaded successfully"
-fi
+# Create media directories if they don't exist
+# Note: In development with docker-compose volumes, we may need to create these
+# The directories should be created by Django when needed, but we'll try to create them here
+echo "Ensuring media directories exist..."
+python manage.py shell << 'EOF' 2>/dev/null || true
+import os
+from django.conf import settings
+try:
+    media_root = settings.MEDIA_ROOT
+    vessel_icons_dir = os.path.join(media_root, 'vessel_icons')
+    os.makedirs(media_root, exist_ok=True)
+    os.makedirs(vessel_icons_dir, exist_ok=True)
+    print(f'Media directories ready at {media_root}')
+except Exception as e:
+    print(f'Note: Media directory setup: {e}')
+    pass
+EOF
 
 # Run migrations
 echo "Running migrations..."
@@ -84,8 +47,21 @@ echo "Ensuring superuser exists..."
 python manage.py ensure_superuser
 
 # Start the appropriate server based on environment
-# Use LOCAL_PORT if set, otherwise default to 8000
-PORT=${LOCAL_PORT:-8000}
+PORT=${PORT:-8000}
+
+# Start Django-Q2 worker in background (for both dev and prod)
+echo "Starting Django-Q2 worker in background..."
+nohup python manage.py qcluster > /tmp/qcluster.log 2>&1 &
+QCLUSTER_PID=$!
+echo "QCluster started with PID: $QCLUSTER_PID"
+
+# Function to cleanup on exit
+cleanup() {
+    echo "Shutting down QCluster (PID: $QCLUSTER_PID)..."
+    kill $QCLUSTER_PID 2>/dev/null || true
+    wait $QCLUSTER_PID 2>/dev/null || true
+}
+trap cleanup EXIT
 
 if [ "$DEBUG" = "1" ]; then
     echo "Starting development server on port $PORT..."
@@ -95,9 +71,11 @@ else
     python manage.py collectstatic --noinput
     
     echo "Starting production server on port $PORT..."
-    exec uvicorn config.asgi:application --host 0.0.0.0 --port $PORT \
+    exec gunicorn config.wsgi:application \
+         --bind 0.0.0.0:$PORT \
          --workers 2 \
-         --proxy-headers \
-         --forwarded-allow-ips '*' \
-         --timeout-keep-alive 120 
+         --threads 4 \
+         --timeout 120 \
+         --access-logfile - \
+         --error-logfile -
 fi

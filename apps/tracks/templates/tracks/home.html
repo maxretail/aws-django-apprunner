@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+
+{% block title %}SailArchive - Track Your Sailing Adventures{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-lg-8">
+        <h1 class="mb-4">Welcome to SailArchive</h1>
+        <p class="lead">Record, visualize, and share your sailing tracks.</p>
+        
+        {% if not user.is_authenticated %}
+        <div class="mb-4">
+            <a href="{% url 'registration_register' %}" class="btn btn-primary btn-lg me-2">Get Started</a>
+            <a href="{% url 'auth_login' %}" class="btn btn-outline-primary btn-lg">Login</a>
+        </div>
+        {% else %}
+        <div class="mb-4">
+            <a href="{% url 'tracks:upload_gpx' %}" class="btn btn-primary btn-lg">Upload Track</a>
+        </div>
+        {% endif %}
+        
+        <div class="row mt-4">
+            <div class="col-md-4 mb-3">
+                <div class="card h-100">
+                    <div class="card-body">
+                        <h5 class="card-title">📤 Upload Tracks</h5>
+                        <p class="card-text">Import your GPX or JSON track files from any GPS device or app.</p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4 mb-3">
+                <div class="card h-100">
+                    <div class="card-body">
+                        <h5 class="card-title">🗺️ Visualize</h5>
+                        <p class="card-text">View your tracks on interactive maps with playback.</p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4 mb-3">
+                <div class="card h-100">
+                    <div class="card-body">
+                        <h5 class="card-title">👥 Share</h5>
+                        <p class="card-text">Share your sailing adventures with friends and crew.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-lg-4">
+        {% if recent_recordings %}
+        <h5 class="mb-3">Recent Public Tracks</h5>
+        {% for recording in recent_recordings %}
+        <div class="card mb-2 recording-card">
+            <div class="card-body py-2">
+                <a href="{% url 'tracks:recording_detail' pk=recording.pk %}" class="text-decoration-none">
+                    <strong>{{ recording.name|default:recording.vessel.name|default:"Untitled" }}</strong>
+                </a>
+                <br>
+                <small class="text-muted">
+                    {{ recording.start_time|date:"M d, Y" }}
+                    {% if recording.distance_nm %}• {{ recording.distance_nm }} nm{% endif %}
+                </small>
+            </div>
+        </div>
+        {% endfor %}
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

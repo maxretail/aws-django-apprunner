@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+
+{% block title %}My Vessels - SailArchive{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1>My Vessels</h1>
+    <div>
+        <a href="{% url 'tracks:claim_vessel' %}" class="btn btn-outline-primary me-2">Claim Existing Vessel</a>
+        <a href="{% url 'tracks:create_vessel' %}" class="btn btn-primary">Add New Vessel</a>
+    </div>
+</div>
+
+{% if permissions %}
+<div class="row">
+    {% for perm in permissions %}
+    <div class="col-md-6 col-lg-4 mb-4">
+        <div class="card h-100">
+            <div class="card-body">
+                <h5 class="card-title">
+                    {{ perm.vessel.name }}
+                    {% if perm.is_primary_owner %}
+                    <span class="badge bg-primary">Owner</span>
+                    {% endif %}
+                </h5>
+                {% if perm.vessel.sail_number %}
+                <p class="card-text text-muted">Sail #{{ perm.vessel.sail_number }}</p>
+                {% endif %}
+                {% if perm.vessel.model_info %}
+                <p class="card-text">{{ perm.vessel.model_info }}</p>
+                {% endif %}
+            </div>
+            <div class="card-footer">
+                <a href="{% url 'tracks:vessel_detail' pk=perm.vessel.pk %}" class="btn btn-sm btn-outline-primary">
+                    View Details
+                </a>
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<div class="text-center py-5">
+    <p class="text-muted mb-3">You don't have any vessels yet.</p>
+    <a href="{% url 'tracks:create_vessel' %}" class="btn btn-primary">Add Your First Vessel</a>
+</div>
+{% endif %}
+{% endblock %}

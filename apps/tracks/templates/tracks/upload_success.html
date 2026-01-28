@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+
+{% block title %}Upload Successful - SailArchive{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-8 col-lg-6">
+        <div class="card border-success">
+            <div class="card-header bg-success text-white">
+                <h2 class="mb-0">✓ Upload Successful!</h2>
+            </div>
+            <div class="card-body">
+                <p class="lead">Thank you for contributing your track to <strong>{{ event.name }}</strong>!</p>
+                
+                <p>Your track is being processed and will be available shortly. All tracks for this event are public and visible to everyone.</p>
+                
+                {% if is_anonymous %}
+                <div class="alert alert-info mt-4">
+                    <h5 class="alert-heading">Create a Free Account</h5>
+                    <p>Want to manage your tracks, create vessels, and access more features?</p>
+                    <hr>
+                    <div class="d-grid gap-2">
+                        <a href="{% url 'registration_register' %}" class="btn btn-primary">Create Free Account</a>
+                        <a href="{% url 'tracks:home' %}" class="btn btn-outline-secondary">Continue as Guest</a>
+                    </div>
+                    <p class="mb-0 mt-3">
+                        <small class="text-muted">
+                            Creating an account is completely optional. You can always come back later!
+                        </small>
+                    </p>
+                </div>
+                {% else %}
+                <div class="mt-4">
+                    <a href="{% url 'tracks:recording_detail' recording.id %}" class="btn btn-primary">View Your Track</a>
+                    <a href="{% url 'tracks:home' %}" class="btn btn-outline-secondary">Go to Home</a>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+        
+        <div class="card mt-3">
+            <div class="card-body">
+                <h5>What's Next?</h5>
+                <ul class="mb-0">
+                    <li>Your track is being processed (this usually takes a few seconds)</li>
+                    <li>Once ready, it will appear on the event page</li>
+                    <li>All tracks are public and visible to everyone</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

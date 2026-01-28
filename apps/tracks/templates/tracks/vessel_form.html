@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+
+{% block title %}{{ title }} - SailArchive{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-8 col-lg-6">
+        <h1 class="mb-4">{{ title }}</h1>
+        
+        <div class="card">
+            <div class="card-body">
+                <form method="post" enctype="multipart/form-data">
+                    {% csrf_token %}
+                    
+                    <div class="mb-3">
+                        <label for="id_name" class="form-label">Vessel Name *</label>
+                        <input type="text" class="form-control {% if form.name.errors %}is-invalid{% endif %}" 
+                               id="id_name" name="name" value="{{ form.name.value|default:'' }}" required>
+                        {% for error in form.name.errors %}
+                        <div class="invalid-feedback">{{ error }}</div>
+                        {% endfor %}
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="id_sail_number" class="form-label">Sail Number</label>
+                        <input type="text" class="form-control" id="id_sail_number" name="sail_number"
+                               value="{{ form.sail_number.value|default:'' }}">
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="id_model_info" class="form-label">Model</label>
+                        <input type="text" class="form-control" id="id_model_info" name="model_info"
+                               value="{{ form.model_info.value|default:'' }}"
+                               placeholder="e.g., J/24, Beneteau First 40">
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="id_mmsi" class="form-label">MMSI (for AIS)</label>
+                        <input type="text" class="form-control" id="id_mmsi" name="mmsi"
+                               value="{{ form.mmsi.value|default:'' }}"
+                               pattern="[0-9]{9}" maxlength="9"
+                               placeholder="9-digit MMSI number">
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="id_icon" class="form-label">Icon (optional)</label>
+                        <input type="file" class="form-control" id="id_icon" name="icon"
+                               accept="image/*">
+                        <div class="form-text">Upload an image that will be resized to 96x96 pixels</div>
+                    </div>
+                    
+                    <button type="submit" class="btn btn-primary">Save Vessel</button>
+                    <a href="{% url 'tracks:vessel_list' %}" class="btn btn-outline-secondary">Cancel</a>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
