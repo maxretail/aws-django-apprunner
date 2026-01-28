@@ -14,7 +14,7 @@
     <div class="col-lg-8">
         <h1>{{ vessel.name }}</h1>
         
-        <h5 class="mt-4 mb-3">Recordings</h5>
+        <h5 class="mt-4 mb-3">Tracks</h5>
         {% if recordings %}
         <div class="list-group">
             {% for recording in recordings %}
@@ -30,7 +30,7 @@
             {% endfor %}
         </div>
         {% else %}
-        <p class="text-muted">No recordings for this vessel yet.</p>
+        <p class="text-muted">No tracks for this vessel yet.</p>
         {% endif %}
     </div>
     

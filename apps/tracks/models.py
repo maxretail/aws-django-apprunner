@@ -130,6 +130,7 @@ class Event(models.Model):
     date = models.DateField(help_text="Date of the event")
     event_number = models.PositiveIntegerField(null=True, blank=True, help_text="Event number in collection")
     description = models.TextField(blank=True, null=True)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name='created_events')
     share_token = models.UUIDField(
         default=uuid.uuid4,
         unique=True,
@@ -384,20 +385,42 @@ class Recording(models.Model):
 
     def is_accessible_by(self, user):
         """Check if a user can access this recording."""
-        if self.visibility == 'public':
+        if not user or not user.is_authenticated:
+            return False
+        
+        # User owns the recording
+        if self.user == user:
             return True
-        if self.visibility == 'private':
-            return user == self.user
-        if self.visibility == 'shared':
-            # Check if user has permission via VesselPermission
-            if self.vessel:
-                return VesselPermission.objects.filter(
-                    user=user,
-                    vessel=self.vessel,
-                    status='approved'
-                ).exists() or user == self.user
-            return user == self.user
+        
+        # User has access via vessel permission
+        if self.vessel:
+            return VesselPermission.objects.filter(
+                user=user,
+                vessel=self.vessel,
+                status='approved'
+            ).exists()
+        
         return False
+    
+    @classmethod
+    def get_accessible_recordings(cls, user):
+        """
+        Get all recordings accessible by a user.
+        Returns recordings the user uploaded OR recordings for vessels they're connected with.
+        """
+        if not user or not user.is_authenticated:
+            return cls.objects.none()
+        
+        # Get vessels the user has access to
+        user_vessels = VesselPermission.get_user_vessels(user)
+        
+        # Return recordings where:
+        # 1. User uploaded them, OR
+        # 2. Recording is for a vessel the user has access to
+        return cls.objects.filter(
+            models.Q(user=user) |
+            models.Q(vessel__in=user_vessels)
+        ).distinct()
 
 
 class VesselPermission(models.Model):

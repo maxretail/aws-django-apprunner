@@ -51,7 +51,7 @@
         {% if recent_recordings %}
         <h5 class="mb-3">Recent Public Tracks</h5>
         {% for recording in recent_recordings %}
-        <div class="card mb-2 recording-card">
+        <div class="card mb-2 track-card">
             <div class="card-body py-2">
                 <a href="{% url 'tracks:recording_detail' pk=recording.pk %}" class="text-decoration-none">
                     <strong>{{ recording.name|default:recording.vessel.name|default:"Untitled" }}</strong>

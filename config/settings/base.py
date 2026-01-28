@@ -24,6 +24,10 @@ ALLOWED_HOSTS = []
 # Application definition
 
 INSTALLED_APPS = [
+    # Local apps (must come before admin since admin depends on custom User model)
+    'apps.core',
+    
+    # Django built-in apps
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -39,8 +43,7 @@ INSTALLED_APPS = [
     'registration',
     'storages',
     
-    # Local apps
-    'apps.core',
+    # Local apps (continued)
     'apps.tracks',
 ]
 

@@ -1,19 +1,19 @@
 {% extends "base.html" %}
 {% load humanize %}
 
-{% block title %}{{ recording.event.name|default:recording.vessel.name|default:"Recording" }} - SailArchive{% endblock %}
+{% block title %}{{ recording.event.name|default:recording.vessel.name|default:"Track" }} - SailArchive{% endblock %}
 
 {% block content %}
 <div class="row">
     <div class="col-lg-8">
         <nav aria-label="breadcrumb">
             <ol class="breadcrumb">
-                <li class="breadcrumb-item"><a href="{% url 'tracks:recording_list' %}">My Recordings</a></li>
-                <li class="breadcrumb-item active">{{ recording.event.name|default:recording.vessel.name|default:"Recording" }}</li>
+                <li class="breadcrumb-item"><a href="{% url 'tracks:recording_list' %}">My Tracks</a></li>
+                <li class="breadcrumb-item active">{{ recording.event.name|default:recording.vessel.name|default:"Track" }}</li>
             </ol>
         </nav>
         
-        <h1>{{ recording.event.name|default:recording.vessel.name|default:"Recording" }}</h1>
+        <h1>{{ recording.event.name|default:recording.vessel.name|default:"Track" }}</h1>
         
         {% if recording.event %}
         <p class="text-muted">

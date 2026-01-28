@@ -63,21 +63,24 @@ class RecordingViewSet(viewsets.ReadOnlyModelViewSet):
     """
     API endpoint for recordings.
     
-    list: Get recordings accessible by the current user
-    retrieve: Get recording details including signed track URLs
-    track: Get signed URL for a specific zoom level (public recordings accessible without auth)
+    list: Get recordings accessible by the current user (recordings they uploaded or for vessels they're connected with)
+    retrieve: Get recording details including signed track URLs (only accessible recordings)
+    track: Get signed URL for a specific zoom level (only accessible recordings)
     """
     serializer_class = RecordingSerializer
-    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+    permission_classes = [permissions.IsAuthenticated]
     
     def get_queryset(self):
         """Return recordings accessible by the current user."""
         from django.db.models import Count
         user = self.request.user
         
-        # Get recordings the user owns (only cropped children - leaf nodes)
-        own_recordings = Recording.objects.filter(
-            user=user,
+        if not user.is_authenticated:
+            return Recording.objects.none()
+        
+        # Get recordings the user uploaded OR recordings for vessels they're connected with
+        # Only cropped children (leaf nodes)
+        accessible_recordings = Recording.get_accessible_recordings(user).filter(
             original_recording__isnull=False  # Only cropped recordings
         ).annotate(
             cropped_count=Count('cropped_versions')
@@ -85,37 +88,14 @@ class RecordingViewSet(viewsets.ReadOnlyModelViewSet):
             cropped_count=0  # Only leaf nodes
         ).distinct()
         
-        # Get public recordings (only cropped children - leaf nodes)
-        public_recordings = Recording.objects.filter(
-            visibility='public',
-            original_recording__isnull=False
-        ).annotate(
-            cropped_count=Count('cropped_versions')
-        ).filter(
-            cropped_count=0
-        ).distinct()
-        
-        # Get shared recordings for vessels the user has access to (only cropped children - leaf nodes)
-        user_vessels = VesselPermission.get_user_vessels(user)
-        shared_recordings = Recording.objects.filter(
-            visibility='shared',
-            vessel__in=user_vessels,
-            original_recording__isnull=False
-        ).annotate(
-            cropped_count=Count('cropped_versions')
-        ).filter(
-            cropped_count=0
-        ).distinct()
-        
-        # Combine all accessible recordings
-        return (own_recordings | public_recordings | shared_recordings).distinct().order_by('-start_time')
+        return accessible_recordings.order_by('-start_time')
     
     def get_serializer_class(self):
         if self.action == 'retrieve':
             return RecordingDetailSerializer
         return RecordingSerializer
     
-    @action(detail=True, methods=['get'], permission_classes=[permissions.AllowAny])
+    @action(detail=True, methods=['get'], permission_classes=[permissions.IsAuthenticated])
     def track(self, request, pk=None):
         """
         Get a signed URL for the track data at a specific zoom level.
@@ -123,7 +103,7 @@ class RecordingViewSet(viewsets.ReadOnlyModelViewSet):
         Query params:
             zoom: Map zoom level (0-22), defaults to 14
         
-        Public recordings are accessible without authentication.
+        Only accessible for recordings the user uploaded or recordings for vessels they're connected with.
         """
         try:
             recording = Recording.objects.get(pk=pk)
@@ -139,16 +119,8 @@ class RecordingViewSet(viewsets.ReadOnlyModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        # Check access - allow public recordings for anonymous users
-        if recording.visibility == 'public':
-            # Public recordings are accessible to everyone
-            pass
-        elif not request.user.is_authenticated:
-            return Response(
-                {'error': 'Access denied'},
-                status=status.HTTP_403_FORBIDDEN
-            )
-        elif not recording.is_accessible_by(request.user):
+        # Check access - user must own the recording or have access via vessel
+        if not recording.is_accessible_by(request.user):
             return Response(
                 {'error': 'Access denied'},
                 status=status.HTTP_403_FORBIDDEN
@@ -369,13 +341,15 @@ class RecordingViewSet(viewsets.ReadOnlyModelViewSet):
         serializer = self.get_serializer(recordings, many=True)
         return Response(serializer.data)
     
-    @action(detail=True, methods=['get'], permission_classes=[permissions.IsAuthenticatedOrReadOnly])
+    @action(detail=True, methods=['get'], permission_classes=[permissions.IsAuthenticated])
     def status(self, request, pk=None):
         """
         Get the processing status of a recording.
         
         Returns:
             Recording status and error message (if any)
+        
+        Only accessible for recordings the user uploaded or recordings for vessels they're connected with.
         """
         try:
             recording = Recording.objects.get(pk=pk)
@@ -385,16 +359,8 @@ class RecordingViewSet(viewsets.ReadOnlyModelViewSet):
                 status=status.HTTP_404_NOT_FOUND
             )
         
-        # Check access
-        if recording.visibility == 'public':
-            # Public recordings are accessible to everyone
-            pass
-        elif not request.user.is_authenticated:
-            return Response(
-                {'error': 'Access denied'},
-                status=status.HTTP_403_FORBIDDEN
-            )
-        elif not recording.is_accessible_by(request.user):
+        # Check access - user must own the recording or have access via vessel
+        if not recording.is_accessible_by(request.user):
             return Response(
                 {'error': 'Access denied'},
                 status=status.HTTP_403_FORBIDDEN

@@ -23,9 +23,9 @@ class CollectionAdmin(admin.ModelAdmin):
 
 @admin.register(Event)
 class EventAdmin(admin.ModelAdmin):
-    list_display = ['name', 'event_type', 'date', 'collection', 'event_number']
+    list_display = ['name', 'event_type', 'date', 'collection', 'event_number', 'created_by']
     search_fields = ['name', 'description']
-    list_filter = ['event_type', 'date', 'collection']
+    list_filter = ['event_type', 'date', 'collection', 'created_by']
     readonly_fields = ['share_token', 'share_url', 'created_at', 'updated_at']
     actions = ['backfill_wind_fields']
     
@@ -38,7 +38,7 @@ class EventAdmin(admin.ModelAdmin):
             'description': 'Share this event URL to allow anyone to upload tracks to this event.'
         }),
         ('Metadata', {
-            'fields': ('created_at', 'updated_at'),
+            'fields': ('created_by', 'created_at', 'updated_at'),
             'classes': ('collapse',)
         }),
     )

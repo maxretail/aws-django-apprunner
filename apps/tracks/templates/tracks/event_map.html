@@ -466,6 +466,74 @@
         background: #0056b3;
         border-color: #0056b3;
     }
+    #legs-table-container {
+        margin-bottom: 20px;
+    }
+    #legs-table-wrapper {
+        max-height: 400px;
+        overflow-y: auto;
+        overflow-x: auto;
+        border: 1px solid #dee2e6;
+        border-radius: 4px;
+    }
+    #legs-table {
+        font-size: 0.9em;
+        margin-bottom: 0;
+    }
+    #legs-table tbody tr {
+        cursor: pointer;
+    }
+    #legs-table tbody tr.highlighted {
+        background-color: #e7f3ff !important;
+    }
+    #legs-table thead th {
+        background-color: #f8f9fa;
+        font-weight: 600;
+        border-bottom: 2px solid #dee2e6;
+        white-space: nowrap;
+    }
+    #legs-table thead th.sortable {
+        cursor: pointer;
+        user-select: none;
+        position: relative;
+        padding-right: 20px;
+    }
+    #legs-table thead th.sortable:hover {
+        background-color: #e9ecef;
+    }
+    #legs-table thead th.sortable::after {
+        content: ' ↕';
+        position: absolute;
+        right: 5px;
+        opacity: 0.3;
+        font-size: 0.8em;
+    }
+    #legs-table thead th.sortable.sort-asc::after {
+        content: ' ↑';
+        opacity: 1;
+    }
+    #legs-table thead th.sortable.sort-desc::after {
+        content: ' ↓';
+        opacity: 1;
+    }
+    #legs-table tbody tr:hover {
+        background-color: #f8f9fa;
+    }
+    #legs-table tbody td {
+        vertical-align: middle;
+    }
+    @media (max-width: 768px) {
+        #legs-table-container {
+            margin-top: 10px;
+        }
+        #legs-table {
+            font-size: 0.85em;
+        }
+        #legs-table thead th,
+        #legs-table tbody td {
+            padding: 6px 4px;
+        }
+    }
     .processing-indicator {
         display: none;
         align-items: center;
@@ -794,6 +862,52 @@
         </div>
     </div>
 </div>
+
+<!-- Legs Statistics Table -->
+<div class="container-fluid mt-3" id="legs-table-container" style="display: none;">
+    <div class="row">
+        <div class="col-12">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <h5 class="mb-0">Leg Statistics</h5>
+                <div class="leg-filter-buttons">
+                    <label class="small me-3" style="cursor: pointer;">
+                        <input type="radio" name="leg-filter" value="all" checked style="margin-right: 4px;">
+                        All
+                    </label>
+                    <label class="small me-3" style="cursor: pointer;">
+                        <input type="radio" name="leg-filter" value="upwind" style="margin-right: 4px;">
+                        Upwind
+                    </label>
+                    <label class="small" style="cursor: pointer;">
+                        <input type="radio" name="leg-filter" value="downwind" style="margin-right: 4px;">
+                        Downwind
+                    </label>
+                </div>
+            </div>
+            <div id="legs-table-wrapper">
+                <table class="table table-sm table-bordered table-hover" id="legs-table">
+                    <thead>
+                        <tr>
+                            <th class="sortable" data-sort="boat">Boat</th>
+                            <th class="sortable" data-sort="leg">Leg</th>
+                            <th class="sortable" data-sort="angle">Angle</th>
+                            <th class="sortable" data-sort="avgSpeed">Avg Speed</th>
+                            <th class="sortable" data-sort="distance">Distance</th>
+                            <th class="sortable" data-sort="time">Time</th>
+                            <th class="sortable" data-sort="twa">TWA</th>
+                            <th class="sortable" data-sort="tws">TWS</th>
+                            <th class="sortable" data-sort="vmg">VMG</th>
+                            <th class="sortable" data-sort="score">Score</th>
+                        </tr>
+                    </thead>
+                    <tbody id="legs-table-body">
+                        <!-- Table rows will be populated by JavaScript -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
 {% endblock %}
 
 {% block extra_js %}
@@ -806,6 +920,7 @@ const recordings = [
         id: '{{ recording.id }}',
         name: '{{ recording.name|default:recording.vessel.name|default:"Track"|escapejs }}',
         vessel: '{{ recording.vessel.name|default:"Unknown"|escapejs }}',
+        vesselId: '{{ recording.vessel.id|default_if_none:"" }}',
         distance: {{ recording.distance_nm|default:"null" }},
         points: {{ recording.point_count|default:0 }}
     }{% if not forloop.last %},{% endif %}
@@ -916,9 +1031,27 @@ let hoveredSegment = null; // { recordingId, segmentNumber }
 const trackLayer = new ol.layer.Vector({
     source: trackSource,
     style: function(feature) {
+        // Check if feature should be visible based on leg filter
+        const pointOfSail = feature.get('pointOfSail');
+        const segmentType = feature.get('segmentType');
+        
+        // Hide non-leg segments if filtering
+        if (segmentType !== 'leg' && currentLegFilter !== 'all') {
+            return null; // Hide feature
+        }
+        
+        // Filter legs based on upwind/downwind
+        if (segmentType === 'leg' && currentLegFilter !== 'all') {
+            if (currentLegFilter === 'upwind' && pointOfSail !== 'upwind') {
+                return null; // Hide feature
+            }
+            if (currentLegFilter === 'downwind' && pointOfSail !== 'downwind') {
+                return null; // Hide feature
+            }
+        }
+        
         const color = feature.get('color') || '#0066cc';
         const isHighlighted = feature.get('isHighlighted');
-        const segmentType = feature.get('segmentType');
         const segmentNumber = feature.get('segmentNumber');
         const recordingId = feature.get('recordingId');
         
@@ -1145,6 +1278,25 @@ map.addLayer(markerLayer);
 
 // Color palette for different tracks
 const colors = ['#0066cc', '#cc0000', '#00cc00', '#cc00cc', '#00cccc', '#cc6600', '#ff6600', '#6600cc', '#0066cc', '#cc0066'];
+
+// Deterministic color assignment so boats don't "switch" colors.
+// Use vesselId when available, otherwise fall back to vessel name.
+function hashStringToUint32(input) {
+    const str = String(input || '');
+    // djb2 hash
+    let hash = 5381;
+    for (let i = 0; i < str.length; i++) {
+        hash = ((hash << 5) + hash) + str.charCodeAt(i); // hash * 33 + c
+        hash = hash >>> 0; // force uint32
+    }
+    return hash >>> 0;
+}
+
+function getColorForVessel(vesselId, vesselName) {
+    const key = vesselId ? `v:${vesselId}` : `n:${vesselName || ''}`;
+    const idx = hashStringToUint32(key) % colors.length;
+    return colors[idx];
+}
 
 // Playback state
 const playbackState = {
@@ -1817,6 +1969,501 @@ function calculateVMG(averageSpeed, averageHeading, windDirection, pointOfSail) 
     return Math.max(0, vmg); // VMG should be non-negative
 }
 
+// Fetch average wind speed for a leg's time span and geographic area
+// Only fetches if eventToken is available (wind data exists)
+async function fetchLegWindSpeed(segment, eventToken) {
+    if (!segment || !segment.points || segment.points.length < 2 || !eventToken) {
+        return null;
+    }
+    
+    try {
+        // Get time span for the leg
+        const firstPoint = segment.points[0];
+        const lastPoint = segment.points[segment.points.length - 1];
+        if (!firstPoint.timestamp || !lastPoint.timestamp) {
+            return null;
+        }
+        
+        // Use middle timestamp for wind data query
+        const midTimestamp = Math.floor((firstPoint.timestamp + lastPoint.timestamp) / 2);
+        const intervalSeconds = 1800; // 30 minutes for events
+        const timeBucket = Math.floor(midTimestamp / intervalSeconds) * intervalSeconds;
+        
+        // Get bounding box from leg points
+        const lons = segment.points.map(p => p.lon).filter(lon => lon !== null);
+        const lats = segment.points.map(p => p.lat).filter(lat => lat !== null);
+        
+        if (lons.length === 0 || lats.length === 0) {
+            return null;
+        }
+        
+        const minLon = Math.min(...lons);
+        const maxLon = Math.max(...lons);
+        const minLat = Math.min(...lats);
+        const maxLat = Math.max(...lats);
+        
+        const grid = 6;
+        const cacheKey = `${timeBucket}:${grid}:${minLon.toFixed(2)},${minLat.toFixed(2)},${maxLon.toFixed(2)},${maxLat.toFixed(2)}`;
+        
+        // Check if we have cached wind data that covers this leg's area
+        let windPoints = null;
+        for (const [key, cachedPoints] of windState.cache.entries()) {
+            if (key.startsWith(`${timeBucket}:${grid}:`)) {
+                // Check if cached points overlap with leg's bounding box
+                const overlappingPoints = cachedPoints.filter(point => 
+                    point.lat >= minLat && point.lat <= maxLat &&
+                    point.lon >= minLon && point.lon <= maxLon
+                );
+                if (overlappingPoints.length > 0) {
+                    windPoints = overlappingPoints;
+                    break;
+                }
+            }
+        }
+        
+        // If not in cache, fetch wind data for the leg's area and time
+        if (!windPoints) {
+            const response = await fetch(
+                `/api/recordings/wind/?timestamp=${timeBucket}&min_lat=${minLat}&max_lat=${maxLat}` +
+                `&min_lon=${minLon}&max_lon=${maxLon}&grid=${grid}&event_token=${eventToken}`
+            );
+            
+            if (response.ok) {
+                const data = await response.json();
+                windPoints = data.points || [];
+                // Cache the data
+                windState.cache.set(cacheKey, windPoints);
+            } else {
+                return null;
+            }
+        }
+        
+        if (windPoints && windPoints.length > 0) {
+            // Calculate average wind speed from all points in the leg's vicinity
+            let totalSpeed = 0;
+            let count = 0;
+            windPoints.forEach(point => {
+                if (point.speed !== null && point.speed !== undefined) {
+                    totalSpeed += point.speed;
+                    count++;
+                }
+            });
+            return count > 0 ? totalSpeed / count : null;
+        }
+    } catch (error) {
+        console.log('Could not fetch wind speed for leg:', error);
+    }
+    
+    return null;
+}
+
+// Calculate all statistics for a leg segment
+function calculateLegStats(segment, track, tws = null) {
+    if (!segment || segment.type !== 'leg' || !segment.points || segment.points.length < 2) {
+        return null;
+    }
+    
+    const boatName = track ? (track.vessel || track.name || '') : '';
+    const legNumber = segment.segment_number;
+    const recordingId = track ? track.recordingId : null;
+    const angle = segment.average_angle !== null && segment.average_angle !== undefined 
+        ? Math.round(segment.average_angle) 
+        : null;
+    const avgSpeed = segment.average_speed;
+    
+    // Calculate total distance
+    let totalDistance = 0;
+    for (let i = 0; i < segment.points.length - 1; i++) {
+        const p1 = segment.points[i];
+        const p2 = segment.points[i + 1];
+        if (p1.lat !== null && p1.lon !== null && p2.lat !== null && p2.lon !== null) {
+            totalDistance += calculateDistance(p1.lat, p1.lon, p2.lat, p2.lon);
+        }
+    }
+    
+    // Calculate time
+    const firstPoint = segment.points[0];
+    const lastPoint = segment.points[segment.points.length - 1];
+    let timeSeconds = null;
+    let timeFormatted = '--';
+    if (firstPoint.timestamp && lastPoint.timestamp) {
+        timeSeconds = lastPoint.timestamp - firstPoint.timestamp;
+        if (timeSeconds > 0) {
+            const hours = Math.floor(timeSeconds / 3600);
+            const minutes = Math.floor((timeSeconds % 3600) / 60);
+            const seconds = Math.floor(timeSeconds % 60);
+            
+            if (hours > 0) {
+                timeFormatted = `${hours}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+            } else {
+                timeFormatted = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+            }
+        }
+    }
+    
+    // Calculate VMG
+    let vmg = null;
+    if (track && track.windDirection !== null && avgSpeed !== null && angle !== null) {
+        const pointOfSail = getPointOfSail(angle, track.windDirection);
+        vmg = calculateVMG(avgSpeed, angle, track.windDirection, pointOfSail);
+    }
+    
+    // Calculate TWA (True Wind Angle) - difference between average bearing and wind direction
+    let twa = null;
+    if (track && track.windDirection !== null && angle !== null) {
+        // Calculate the absolute angle difference between boat heading and wind direction
+        let angleDiff = angle - track.windDirection;
+        // Normalize to -180 to 180 range
+        angleDiff = normalizeAngleDiff(angleDiff);
+        // TWA is the absolute value (always positive, 0-180)
+        twa = Math.abs(angleDiff);
+    }
+    
+    // Calculate score: (VMG * distance) / wind speed
+    let score = null;
+    if (vmg !== null && vmg > 0 && totalDistance > 0 && tws !== null && tws > 0) {
+        score = (vmg * totalDistance) / tws;
+    }
+    
+    return {
+        boatName: boatName,
+        legNumber: legNumber,
+        recordingId: recordingId,
+        angle: angle,
+        distance: totalDistance,
+        timeSeconds: timeSeconds,
+        timeFormatted: timeFormatted,
+        avgSpeed: avgSpeed,
+        vmg: vmg,
+        twa: twa,
+        tws: tws,
+        score: score
+    };
+}
+
+// Build table data from all tracks
+async function buildLegsTableData() {
+    const legsData = [];
+    
+    if (!playbackState.trackData || playbackState.trackData.length === 0) {
+        return legsData;
+    }
+    
+    // Fetch wind speeds for all legs in parallel
+    const windSpeedPromises = [];
+    const legSegments = [];
+    
+    playbackState.trackData.forEach(track => {
+        if (track.segments && track.segments.length > 0) {
+            track.segments.forEach(segment => {
+                if (segment.type === 'leg') {
+                    legSegments.push({ segment, track });
+                    if (eventToken) {
+                        windSpeedPromises.push(fetchLegWindSpeed(segment, eventToken));
+                    } else {
+                        windSpeedPromises.push(Promise.resolve(null));
+                    }
+                }
+            });
+        }
+    });
+    
+    // Wait for all wind speed fetches to complete
+    const windSpeeds = await Promise.all(windSpeedPromises);
+    
+    // Build stats with wind speeds
+    legSegments.forEach(({ segment, track }, index) => {
+        const tws = windSpeeds[index];
+        const stats = calculateLegStats(segment, track, tws);
+        if (stats) {
+            legsData.push(stats);
+        }
+    });
+    
+    return legsData;
+}
+
+// Format time for sorting (convert to seconds)
+function parseTimeForSort(timeFormatted) {
+    if (!timeFormatted || timeFormatted === '--') {
+        return 0;
+    }
+    const parts = timeFormatted.split(':');
+    if (parts.length === 3) {
+        // HH:MM:SS
+        return parseInt(parts[0]) * 3600 + parseInt(parts[1]) * 60 + parseInt(parts[2]);
+    } else if (parts.length === 2) {
+        // MM:SS
+        return parseInt(parts[0]) * 60 + parseInt(parts[1]);
+    }
+    return 0;
+}
+
+// Render the legs table
+let currentSortColumn = 'vmg';
+let currentSortDirection = 'desc';
+let currentLegFilter = 'all'; // 'all', 'upwind', 'downwind'
+
+function renderLegsTable(legsData, sortColumn, sortDirection, legFilter) {
+    const tbody = document.getElementById('legs-table-body');
+    const container = document.getElementById('legs-table-container');
+    
+    if (!tbody || !container) {
+        return;
+    }
+    
+    // Update sort state
+    if (sortColumn) {
+        currentSortColumn = sortColumn;
+    }
+    if (sortDirection) {
+        currentSortDirection = sortDirection;
+    }
+    if (legFilter !== undefined) {
+        currentLegFilter = legFilter;
+    }
+    
+    // Filter legs based on selected filter
+    let filteredData = legsData;
+    if (currentLegFilter !== 'all') {
+        filteredData = legsData.filter(leg => {
+            if (leg.twa === null || leg.twa === undefined) {
+                return false; // Exclude legs without TWA
+            }
+            if (currentLegFilter === 'upwind') {
+                // Upwind: TWA < 90 degrees
+                return leg.twa < 90;
+            } else if (currentLegFilter === 'downwind') {
+                // Downwind: TWA >= 90 degrees
+                return leg.twa >= 90;
+            }
+            return true;
+        });
+    }
+    
+    // Sort the data
+    const sortedData = [...filteredData].sort((a, b) => {
+        let aVal, bVal;
+        
+        switch (currentSortColumn) {
+            case 'boat':
+                aVal = (a.boatName || '').toLowerCase();
+                bVal = (b.boatName || '').toLowerCase();
+                break;
+            case 'leg':
+                aVal = a.legNumber || 0;
+                bVal = b.legNumber || 0;
+                break;
+            case 'angle':
+                aVal = a.angle !== null ? a.angle : -1;
+                bVal = b.angle !== null ? b.angle : -1;
+                break;
+            case 'avgSpeed':
+                aVal = a.avgSpeed !== null ? a.avgSpeed : -1;
+                bVal = b.avgSpeed !== null ? b.avgSpeed : -1;
+                break;
+            case 'distance':
+                aVal = a.distance !== null ? a.distance : -1;
+                bVal = b.distance !== null ? b.distance : -1;
+                break;
+            case 'time':
+                aVal = a.timeSeconds !== null ? a.timeSeconds : 0;
+                bVal = b.timeSeconds !== null ? b.timeSeconds : 0;
+                break;
+            case 'twa':
+                aVal = a.twa !== null ? a.twa : -1;
+                bVal = b.twa !== null ? b.twa : -1;
+                break;
+            case 'tws':
+                aVal = a.tws !== null ? a.tws : -1;
+                bVal = b.tws !== null ? b.tws : -1;
+                break;
+            case 'vmg':
+                aVal = a.vmg !== null ? a.vmg : -1;
+                bVal = b.vmg !== null ? b.vmg : -1;
+                break;
+            case 'score':
+                aVal = a.score !== null ? a.score : -1;
+                bVal = b.score !== null ? b.score : -1;
+                break;
+            default:
+                return 0;
+        }
+        
+        if (aVal < bVal) {
+            return currentSortDirection === 'asc' ? -1 : 1;
+        }
+        if (aVal > bVal) {
+            return currentSortDirection === 'asc' ? 1 : -1;
+        }
+        return 0;
+    });
+    
+    // Clear existing rows
+    tbody.innerHTML = '';
+    
+    // Check if we have multiple tracks (to show boat column)
+    const hasMultipleTracks = playbackState.trackData.length > 1;
+    const boatColumn = document.querySelector('#legs-table thead th[data-sort="boat"]');
+    if (boatColumn) {
+        boatColumn.style.display = hasMultipleTracks ? '' : 'none';
+    }
+    
+    // Check if we have wind data available (to show TWS column)
+    const hasWindData = eventToken !== null && eventToken !== undefined;
+    const twsColumn = document.querySelector('#legs-table thead th[data-sort="tws"]');
+    if (twsColumn) {
+        twsColumn.style.display = hasWindData ? '' : 'none';
+    }
+    
+    // Generate rows
+    if (sortedData.length === 0) {
+        const row = document.createElement('tr');
+        // Calculate colspan: boat (if multi-track) + leg + angle + speed + distance + time + twa + tws (if wind data) + vmg + score
+        let colSpan = 8; // leg + angle + speed + distance + time + twa + vmg + score
+        if (hasMultipleTracks) colSpan++; // boat
+        if (hasWindData) colSpan++; // tws
+        row.innerHTML = `<td colspan="${colSpan}" class="text-center text-muted">No leg data available</td>`;
+        tbody.appendChild(row);
+        container.style.display = 'block';
+        return;
+    }
+    
+    sortedData.forEach(leg => {
+        const row = document.createElement('tr');
+        
+        // Store data attributes for hover highlighting
+        if (leg.recordingId !== null && leg.recordingId !== undefined) {
+            row.setAttribute('data-recording-id', leg.recordingId);
+            row.setAttribute('data-segment-number', leg.legNumber);
+        }
+        
+        const boatCell = hasMultipleTracks 
+            ? `<td>${leg.boatName || '--'}</td>` 
+            : '';
+        const angleCell = leg.angle !== null ? `${leg.angle}°` : '--';
+        const avgSpeedCell = leg.avgSpeed !== null && leg.avgSpeed !== undefined 
+            ? formatSpeedWithUnit(leg.avgSpeed, 1) 
+            : '--';
+        const distanceCell = leg.distance !== null && leg.distance !== undefined 
+            ? formatDistance(leg.distance, 2) 
+            : '--';
+        const twaCell = leg.twa !== null && leg.twa !== undefined 
+            ? `${Math.round(leg.twa)}°` 
+            : '--';
+        const twsCell = hasWindData && leg.tws !== null && leg.tws !== undefined 
+            ? formatSpeedWithUnit(leg.tws, 1) 
+            : (hasWindData ? '--' : '');
+        const vmgCell = leg.vmg !== null && leg.vmg !== undefined 
+            ? formatSpeedWithUnit(leg.vmg, 1) 
+            : '--';
+        const scoreCell = leg.score !== null && leg.score !== undefined 
+            ? leg.score.toFixed(2) 
+            : '--';
+        
+        row.innerHTML = `
+            ${boatCell}
+            <td>${leg.legNumber}</td>
+            <td>${angleCell}</td>
+            <td>${avgSpeedCell}</td>
+            <td>${distanceCell}</td>
+            <td>${leg.timeFormatted}</td>
+            <td>${twaCell}</td>
+            ${hasWindData ? `<td>${twsCell}</td>` : ''}
+            <td>${vmgCell}</td>
+            <td>${scoreCell}</td>
+        `;
+        
+        tbody.appendChild(row);
+    });
+    
+    // Setup row hover handlers for map highlighting
+    setupTableRowHover();
+    
+    // Update sort indicators
+    document.querySelectorAll('#legs-table thead th.sortable').forEach(th => {
+        th.classList.remove('sort-asc', 'sort-desc');
+        if (th.getAttribute('data-sort') === currentSortColumn) {
+            th.classList.add(`sort-${currentSortDirection}`);
+        }
+    });
+    
+    // Show the table
+    container.style.display = 'block';
+}
+
+// Setup table sorting
+function setupTableSorting() {
+    document.querySelectorAll('#legs-table thead th.sortable').forEach(th => {
+        th.addEventListener('click', function() {
+            const column = this.getAttribute('data-sort');
+            if (!column) {
+                return;
+            }
+            
+            // Toggle sort direction if clicking the same column
+            if (column === currentSortColumn) {
+                currentSortDirection = currentSortDirection === 'asc' ? 'desc' : 'asc';
+            } else {
+                // New column defaults to desc for VMG, asc for others
+                currentSortDirection = column === 'vmg' ? 'desc' : 'asc';
+            }
+            
+            buildLegsTableData().then(legsData => {
+                renderLegsTable(legsData, column, currentSortDirection);
+            });
+        });
+    });
+    
+    // Setup leg filter radio buttons
+    document.querySelectorAll('input[name="leg-filter"]').forEach(radio => {
+        radio.addEventListener('change', function() {
+            const filter = this.value;
+            buildLegsTableData().then(legsData => {
+                renderLegsTable(legsData, null, null, filter);
+                // Update map to show/hide legs based on filter
+                updateMapLegVisibility(filter);
+            });
+        });
+    });
+}
+
+// Update map to show/hide legs based on filter
+function updateMapLegVisibility(filter) {
+    // Trigger style refresh to apply filter
+    trackSource.changed();
+}
+
+// Setup table row hover handlers for map highlighting
+function setupTableRowHover() {
+    const rows = document.querySelectorAll('#legs-table tbody tr[data-recording-id]');
+    
+    rows.forEach(row => {
+        row.addEventListener('mouseenter', function() {
+            const recordingId = this.getAttribute('data-recording-id');
+            const segmentNumber = parseInt(this.getAttribute('data-segment-number'));
+            
+            if (recordingId && segmentNumber !== null && segmentNumber !== undefined) {
+                // Highlight the row
+                this.classList.add('highlighted');
+                
+                // Highlight the leg on the map
+                hoveredSegment = { recordingId, segmentNumber };
+                trackSource.changed(); // Trigger style refresh
+            }
+        });
+        
+        row.addEventListener('mouseleave', function() {
+            // Remove row highlight
+            this.classList.remove('highlighted');
+            
+            // Clear map highlight
+            hoveredSegment = null;
+            trackSource.changed(); // Trigger style refresh
+        });
+    });
+}
+
 // Check if heading is upwind relative to wind direction
 function isUpwind(heading, windDirection) {
     const upwindDir = (windDirection + 180) % 360;
@@ -2344,6 +2991,12 @@ function updatePlaybackDisplay() {
                     segmentFeature.set('segmentNumber', segment.segment_number);
                     segmentFeature.set('recordingId', track.recordingId);
                     
+                    // Store pointOfSail for filtering (upwind/downwind)
+                    if (segment.type === 'leg' && track.windDirection !== null && segment.average_angle !== null) {
+                        const pointOfSail = getPointOfSail(segment.average_angle, track.windDirection);
+                        segmentFeature.set('pointOfSail', pointOfSail);
+                    }
+                    
                     trackSource.addFeature(segmentFeature);
                     
                     // Store current segment for direction overlay and speedometer
@@ -2628,6 +3281,13 @@ function refreshAllDisplays() {
         }
     }
     
+    // Refresh legs table
+    if (playbackState.trackData.length > 0) {
+        buildLegsTableData().then(legsData => {
+            renderLegsTable(legsData, currentSortColumn, currentSortDirection, currentLegFilter);
+        });
+    }
+    
     // Refresh speedometers and playback display if tracks are loaded
     if (playbackState.trackData.length > 0 && playbackState.startTimestamp && playbackState.endTimestamp) {
         updatePlaybackDisplay();
@@ -2708,13 +3368,24 @@ map.on('pointermove', function(event) {
             let tooltipText = '';
             const speedText = averageSpeed !== null && averageSpeed !== undefined ? ` | Avg ${formatSpeedWithUnit(averageSpeed, 1)}` : '';
             
-            // Calculate VMG for leg segments
+            // Calculate VMG, TWA, and fetch TWS for leg segments
             let vmgText = '';
-            if (segmentType === 'leg' && track && track.windDirection !== null && averageSpeed !== null) {
-                const pointOfSail = getPointOfSail(averageAngle, track.windDirection);
-                const vmg = calculateVMG(averageSpeed, averageAngle, track.windDirection, pointOfSail);
-                if (vmg !== null) {
-                    vmgText = ` | VMG ${formatSpeedWithUnit(vmg, 1)}`;
+            let twaText = '';
+            let twsText = '';
+            if (segmentType === 'leg' && track && track.windDirection !== null) {
+                if (averageSpeed !== null) {
+                    const pointOfSail = getPointOfSail(averageAngle, track.windDirection);
+                    const vmg = calculateVMG(averageSpeed, averageAngle, track.windDirection, pointOfSail);
+                    if (vmg !== null) {
+                        vmgText = ` | VMG ${formatSpeedWithUnit(vmg, 1)}`;
+                    }
+                }
+                // Calculate TWA
+                if (averageAngle !== null) {
+                    let angleDiff = averageAngle - track.windDirection;
+                    angleDiff = normalizeAngleDiff(angleDiff);
+                    const twa = Math.abs(angleDiff);
+                    twaText = ` | TWA ${Math.round(twa)}°`;
                 }
             }
             
@@ -2760,7 +3431,7 @@ map.on('pointermove', function(event) {
             } else if (segmentType === 'gybe') {
                 tooltipText = `${boatNameText}Gybe: Avg angle ${Math.round(averageAngle)}°${speedText}`;
             } else {
-                tooltipText = `${boatNameText}Leg ${segmentNumber}: ${Math.round(averageAngle)}°${speedText}${distanceText}${timeText}${vmgText}`;
+                tooltipText = `${boatNameText}Leg ${segmentNumber}: ${Math.round(averageAngle)}°${speedText}${distanceText}${timeText}${twaText}${vmgText}`;
             }
             
             segmentTooltip.textContent = tooltipText;
@@ -2768,6 +3439,26 @@ map.on('pointermove', function(event) {
             segmentTooltip.style.top = `${event.pixel[1]}px`;
             segmentTooltip.style.display = 'block';
             windTooltip.style.display = 'none';
+            
+            // Fetch TWS asynchronously for hover popup and update tooltip when available
+            if (segmentType === 'leg' && segmentData && eventToken) {
+                fetchLegWindSpeed(segmentData, eventToken).then(tws => {
+                    if (tws !== null && tws !== undefined && segmentTooltip.style.display === 'block') {
+                        // Update tooltip with TWS - insert before VMG if VMG exists
+                        const currentText = segmentTooltip.textContent;
+                        if (!currentText.includes('TWS')) {
+                            const twsText = ` | TWS ${formatSpeedWithUnit(tws, 1)}`;
+                            if (currentText.includes('VMG')) {
+                                segmentTooltip.textContent = currentText.replace(' | VMG', `${twsText} | VMG`);
+                            } else {
+                                segmentTooltip.textContent = currentText + twsText;
+                            }
+                        }
+                    }
+                }).catch(() => {
+                    // Silently fail if TWS fetch fails
+                });
+            }
             
             // Show direction overlay for leg segments using full segment data
             if (segmentType === 'leg' && segmentData) {
@@ -2875,6 +3566,9 @@ document.querySelectorAll('.speed-btn').forEach(btn => {
 // Initialize with default speed (500x)
 updateSpeedButtons(500);
 
+// Setup table sorting handlers
+setupTableSorting();
+
 // Get appropriate zoom level for API
 function getZoomLevelForAPI() {
     const zoom = map.getView().getZoom();
@@ -2938,7 +3632,7 @@ async function loadEventTracks(fitToExtent = false) {
                 featureProjection: 'EPSG:3857'
             });
             
-            const color = colors[index % colors.length];
+            const color = getColorForVessel(recording.vesselId, recording.vessel);
             feature.set('color', color);
             feature.set('name', recording.name);
             feature.set('vessel', recording.vessel);
@@ -2994,6 +3688,11 @@ async function loadEventTracks(fitToExtent = false) {
             track.segments = segmentTrack(track.points, windDirection);
         }
         
+        // Render legs table after segments are created
+        buildLegsTableData().then(legsData => {
+            renderLegsTable(legsData, 'vmg', 'desc', 'all');
+        });
+        
         // Populate hover detection layer with full segment geometries
         hoverDetectionSource.clear();
         playbackState.trackData.forEach(track => {
@@ -3039,6 +3738,12 @@ async function loadEventTracks(fitToExtent = false) {
                         segmentFeature.set('averageSpeed', segment.average_speed);
                         segmentFeature.set('segmentNumber', segment.segment_number);
                         segmentFeature.set('recordingId', track.recordingId);
+                        
+                        // Store pointOfSail for filtering (upwind/downwind)
+                        if (segment.type === 'leg' && track.windDirection !== null && segment.average_angle !== null) {
+                            const pointOfSail = getPointOfSail(segment.average_angle, track.windDirection);
+                            segmentFeature.set('pointOfSail', pointOfSail);
+                        }
                         
                         trackSource.addFeature(segmentFeature);
                     });

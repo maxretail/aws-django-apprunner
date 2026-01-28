@@ -23,9 +23,10 @@ from django.utils.decorators import method_decorator
 def home(request):
     """Home page."""
     from django.db.models import Count
-    context = {
-        'recent_recordings': Recording.objects.filter(
-            visibility='public',
+    
+    if request.user.is_authenticated:
+        # Show user's accessible recordings
+        recordings = Recording.get_accessible_recordings(request.user).filter(
             status='ready',
             original_recording__isnull=False  # Only cropped recordings
         ).annotate(
@@ -33,6 +34,12 @@ def home(request):
         ).filter(
             cropped_count=0  # Only leaf nodes
         ).distinct().order_by('-created_at')[:10]
+    else:
+        # Anonymous users see nothing
+        recordings = Recording.objects.none()
+    
+    context = {
+        'recent_recordings': recordings
     }
     return render(request, 'tracks/home.html', context)
 
@@ -41,10 +48,10 @@ def home(request):
 def recording_list(request):
     """List recordings for the current user."""
     from django.db.models import Count
+    # Show recordings the user uploaded OR recordings for vessels they're connected with
     # Only show cropped children (recordings that have been cropped)
     # Exclude originals that have been cropped (they have cropped_versions)
-    recordings = Recording.objects.filter(
-        user=request.user,
+    recordings = Recording.get_accessible_recordings(request.user).filter(
         original_recording__isnull=False  # Only show cropped recordings
     ).annotate(
         cropped_count=Count('cropped_versions')
@@ -125,7 +132,8 @@ def upload_gpx(request):
                     # Create new event - date will be set after GPX is processed
                     event = Event.objects.create(
                         name=event_name,
-                        date=date.today()  # Will be updated after processing
+                        date=date.today(),  # Will be updated after processing
+                        created_by=request.user if request.user.is_authenticated else None
                     )
             
             # Create recording in processing state (no name field, default to public)
@@ -171,7 +179,14 @@ def upload_gpx(request):
 @login_required
 def recording_status(request, pk):
     """AJAX endpoint to check recording processing status."""
-    recording = get_object_or_404(Recording, pk=pk, user=request.user)
+    recording = get_object_or_404(Recording, pk=pk)
+    
+    # Check access
+    if not recording.is_accessible_by(request.user):
+        return JsonResponse({
+            'error': 'Access denied'
+        }, status=403)
+    
     return JsonResponse({
         'status': recording.status,
         'error_message': recording.error_message,
@@ -181,7 +196,12 @@ def recording_status(request, pk):
 @login_required
 def merge_event(request, pk):
     """Merge recording's event into an existing event."""
-    recording = get_object_or_404(Recording, pk=pk, user=request.user)
+    recording = get_object_or_404(Recording, pk=pk)
+    
+    # Check access
+    if not recording.is_accessible_by(request.user):
+        messages.error(request, 'You do not have access to this recording.')
+        return redirect('tracks:recording_list')
     
     if request.method == 'POST':
         target_event_id = request.POST.get('target_event_id')
@@ -244,19 +264,21 @@ def vessel_detail(request, pk):
         status='approved'
     ).exists()
     
+    if not has_access:
+        messages.error(request, 'You do not have access to this vessel.')
+        return redirect('tracks:vessel_list')
+    
     # Get recordings for this vessel that the user can see
-    recordings = Recording.objects.filter(
+    # User can see recordings they uploaded OR recordings for vessels they're connected with
+    recordings = Recording.get_accessible_recordings(request.user).filter(
         vessel=vessel,
         status='ready'
-    )
-    
-    if not has_access:
-        recordings = recordings.filter(visibility='public')
+    ).order_by('-start_time')[:20]
     
     return render(request, 'tracks/vessel_detail.html', {
         'vessel': vessel,
         'has_access': has_access,
-        'recordings': recordings.order_by('-start_time')[:20]
+        'recordings': recordings
     })
 
 
@@ -437,11 +459,15 @@ def upload_gpx_to_event(request, token):
     else:
         form = EventGPXUploadForm(user=request.user, event=event, last_vessel=last_vessel)
     
-    # Get all ready recordings for this event
-    recordings = Recording.objects.filter(
-        event=event,
-        status='ready'
-    ).select_related('vessel').order_by('-start_time')
+    # Get all ready recordings for this event that the user can see
+    if request.user.is_authenticated:
+        recordings = Recording.get_accessible_recordings(request.user).filter(
+            event=event,
+            status='ready'
+        ).select_related('vessel').order_by('-start_time')
+    else:
+        # Anonymous users see nothing
+        recordings = Recording.objects.none()
     
     return render(request, 'tracks/upload_to_event.html', {
         'form': form,
@@ -454,7 +480,7 @@ def upload_gpx_to_event(request, token):
 def event_map(request, token):
     """
     Full-screen map view showing all tracks for an event.
-    Public access - no authentication required.
+    Shows only recordings the user uploaded OR recordings for vessels they're connected with.
     """
     # Look up event by share token
     try:
@@ -463,11 +489,15 @@ def event_map(request, token):
         messages.error(request, 'Invalid event link. Please check the URL and try again.')
         return redirect('tracks:home')
     
-    # Get all ready recordings for this event
-    recordings = Recording.objects.filter(
-        event=event,
-        status='ready'
-    ).select_related('vessel').order_by('-start_time')
+    # Get all ready recordings for this event that the user can see
+    if request.user.is_authenticated:
+        recordings = Recording.get_accessible_recordings(request.user).filter(
+            event=event,
+            status='ready'
+        ).select_related('vessel').order_by('-start_time')
+    else:
+        # Anonymous users see nothing
+        recordings = Recording.objects.none()
     
     return render(request, 'tracks/event_map.html', {
         'event': event,
@@ -475,40 +505,33 @@ def event_map(request, token):
     })
 
 
+@login_required
 def event_list(request):
     """
-    List events the user has participated in (if authenticated) or show recent public events.
-    Public access - no authentication required.
+    List events the user has participated in.
+    Shows events where the user has uploaded tracks OR events with recordings for vessels they're connected with.
     """
-    if request.user.is_authenticated:
-        if request.method == 'POST':
-            form = EventForm(request.POST)
-            if form.is_valid():
-                event = form.save()
-                messages.success(request, f'Event "{event.name}" created.')
-                return redirect('tracks:upload_to_event', token=event.share_token)
-        else:
-            form = EventForm()
-
-        # Show events the user has uploaded tracks to
-        user_events = Event.objects.filter(
-            recordings__user=request.user
-        ).distinct().order_by('-date', '-created_at')
-        
-        return render(request, 'tracks/event_list.html', {
-            'events': user_events,
-            'is_authenticated': True,
-            'event_form': form
-        })
+    if request.method == 'POST':
+        form = EventForm(request.POST)
+        if form.is_valid():
+            event = form.save(commit=False)
+            event.created_by = request.user
+            event.save()
+            messages.success(request, f'Event "{event.name}" created.')
+            return redirect('tracks:upload_to_event', token=event.share_token)
     else:
-        # For anonymous users, show recent events with public tracks
-        recent_events = Event.objects.filter(
-            recordings__visibility='public',
-            recordings__status='ready'
-        ).distinct().order_by('-date', '-created_at')[:20]
-        
-        return render(request, 'tracks/event_list.html', {
-            'events': recent_events,
-            'is_authenticated': False,
-            'event_form': None
-        })
+        form = EventForm()
+
+    # Show events where user has accessible recordings
+    # Get recordings the user can access
+    accessible_recordings = Recording.get_accessible_recordings(request.user)
+    # Get events from those recordings
+    user_events = Event.objects.filter(
+        recordings__in=accessible_recordings
+    ).distinct().order_by('-date', '-created_at')
+    
+    return render(request, 'tracks/event_list.html', {
+        'events': user_events,
+        'is_authenticated': True,
+        'event_form': form
+    })

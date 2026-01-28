@@ -146,7 +146,8 @@ const recordings = [
     {
         id: '{{ recording.id }}',
         name: '{{ recording.name|default:recording.vessel.name|default:"Track"|escapejs }}',
-        vessel: '{{ recording.vessel.name|default:"Unknown"|escapejs }}'
+        vessel: '{{ recording.vessel.name|default:"Unknown"|escapejs }}',
+        vesselId: '{{ recording.vessel.id|default_if_none:"" }}'
     }{% if not forloop.last %},{% endif %}
     {% endfor %}
 ];
@@ -184,6 +185,23 @@ map.addLayer(trackLayer);
 // Color palette for different tracks
 const colors = ['#0066cc', '#cc0000', '#00cc00', '#cc00cc', '#00cccc', '#cc6600', '#0066cc', '#6600cc'];
 
+// Deterministic color assignment so boats keep consistent colors.
+function hashStringToUint32(input) {
+    const str = String(input || '');
+    let hash = 5381;
+    for (let i = 0; i < str.length; i++) {
+        hash = ((hash << 5) + hash) + str.charCodeAt(i);
+        hash = hash >>> 0;
+    }
+    return hash >>> 0;
+}
+
+function getColorForVessel(vesselId, vesselName) {
+    const key = vesselId ? `v:${vesselId}` : `n:${vesselName || ''}`;
+    const idx = hashStringToUint32(key) % colors.length;
+    return colors[idx];
+}
+
 // Load all tracks
 async function loadEventTracks() {
     const promises = recordings.map(async (recording, index) => {
@@ -204,7 +222,7 @@ async function loadEventTracks() {
                 featureProjection: 'EPSG:3857'
             });
             
-            feature.set('color', colors[index % colors.length]);
+            feature.set('color', getColorForVessel(recording.vesselId, recording.vessel));
             feature.set('name', recording.name);
             feature.set('vessel', recording.vessel);
             

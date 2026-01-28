@@ -24,10 +24,10 @@
         .card {
             box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
         }
-        .recording-card {
+        .track-card {
             transition: transform 0.2s;
         }
-        .recording-card:hover {
+        .track-card:hover {
             transform: translateY(-2px);
         }
     </style>
@@ -50,7 +50,7 @@
                     </li>
                     {% if user.is_authenticated %}
                     <li class="nav-item">
-                        <a class="nav-link" href="{% url 'tracks:recording_list' %}">My Recordings</a>
+                        <a class="nav-link" href="{% url 'tracks:recording_list' %}">My Tracks</a>
                     </li>
                     <li class="nav-item">
                         <a class="nav-link" href="{% url 'tracks:vessel_list' %}">My Vessels</a>
