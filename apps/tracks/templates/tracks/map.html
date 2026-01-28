@@ -67,6 +67,19 @@
         min-width: 200px;
         text-align: center;
     }
+    .wind-tooltip {
+        position: absolute;
+        background: rgba(0, 0, 0, 0.75);
+        color: white;
+        padding: 4px 6px;
+        border-radius: 4px;
+        font-size: 12px;
+        pointer-events: none;
+        white-space: nowrap;
+        transform: translate(-50%, -120%);
+        z-index: 1100;
+        display: none;
+    }
 </style>
 {% endblock %}
 
@@ -80,7 +93,14 @@
 
 <div class="position-relative">
     <div id="map"></div>
+    <div id="wind-tooltip" class="wind-tooltip"></div>
     <div class="map-controls">
+        <div class="mb-2">
+            <label>
+                <input type="checkbox" id="wind-toggle">
+                Wind overlay
+            </label>
+        </div>
         <div class="mb-2">
             <strong>Track Info</strong>
         </div>
@@ -118,6 +138,61 @@ const map = new ol.Map({
         zoom: 10
     })
 });
+
+// Wind overlay layer (below track layers)
+const windSource = new ol.source.Vector();
+const windStyleCache = new Map();
+function createWindArrowStyle(speed, direction) {
+    const rotation = windDirectionToRotation(direction);
+    const scale = Math.max(0.9, Math.min(2.0, 0.9 + (speed / 18)));
+    const key = `${Math.round(speed * 2)}:${Math.round(rotation * 100)}`;
+    if (windStyleCache.has(key)) {
+        return windStyleCache.get(key);
+    }
+
+    const size = Math.round(26 * scale);
+    const canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext('2d');
+
+    ctx.translate(size / 2, size / 2);
+    ctx.rotate(rotation);
+    ctx.beginPath();
+    ctx.moveTo(0, -size * 0.45); // tip
+    ctx.lineTo(size * 0.18, -size * 0.12);
+    ctx.lineTo(size * 0.06, -size * 0.12);
+    ctx.lineTo(size * 0.06, size * 0.35);
+    ctx.lineTo(-size * 0.06, size * 0.35);
+    ctx.lineTo(-size * 0.06, -size * 0.12);
+    ctx.lineTo(-size * 0.18, -size * 0.12);
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(0, 102, 204, 0.7)';
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
+    ctx.lineWidth = 1;
+    ctx.fill();
+    ctx.stroke();
+
+    const style = new ol.style.Style({
+        image: new ol.style.Icon({
+            img: canvas,
+            imgSize: [size, size],
+            anchor: [0.5, 0.5]
+        })
+    });
+    windStyleCache.set(key, style);
+    return style;
+}
+
+const windLayer = new ol.layer.Vector({
+    source: windSource,
+    style: function(feature) {
+        const speed = feature.get('speed') || 0;
+        const direction = feature.get('direction') || 0;
+        return createWindArrowStyle(speed, direction);
+    }
+});
+map.addLayer(windLayer);
 
 // Track layer
 const trackSource = new ol.source.Vector();
@@ -171,6 +246,94 @@ const playbackState = {
     timezone: null, // timezone string for the track location
     fullTrackFeature: null // original full track feature
 };
+
+const windState = {
+    enabled: false,
+    lastKey: null,
+    cache: new Map(),
+    pending: null
+};
+
+function windDirectionToRotation(degreesFrom) {
+    const degreesTo = (degreesFrom + 180) % 360;
+    return (90 - degreesTo) * Math.PI / 180;
+}
+
+function getWindExtent() {
+    const extent = map.getView().calculateExtent(map.getSize());
+    return ol.proj.transformExtent(extent, 'EPSG:3857', 'EPSG:4326');
+}
+
+function renderWindPoints(points) {
+    windSource.clear();
+    points.forEach(point => {
+        const feature = new ol.Feature({
+            geometry: new ol.geom.Point(
+                ol.proj.fromLonLat([point.lon, point.lat])
+            )
+        });
+        feature.set('speed', point.speed);
+        feature.set('direction', point.direction);
+        windSource.addFeature(feature);
+    });
+}
+
+async function updateWindOverlay(force = false) {
+    if (!windState.enabled) {
+        windSource.clear();
+        return;
+    }
+
+    if (!playbackState.startTimestamp) {
+        return;
+    }
+
+    const timestamp = playbackState.startTimestamp + playbackState.currentTime;
+    const intervalSeconds = 3600;
+    const timeBucket = Math.floor(timestamp / intervalSeconds) * intervalSeconds;
+    const extent = getWindExtent();
+    const grid = 4;
+    const key = `${timeBucket}:${grid}:${extent.map(value => value.toFixed(2)).join(',')}`;
+
+    if (!force && key === windState.lastKey) {
+        return;
+    }
+    windState.lastKey = key;
+
+    if (windState.cache.has(key)) {
+        renderWindPoints(windState.cache.get(key));
+        return;
+    }
+
+    if (windState.pending) {
+        windState.pending.abort();
+    }
+    const controller = new AbortController();
+    windState.pending = controller;
+
+    try {
+        const [minLon, minLat, maxLon, maxLat] = extent;
+        const response = await fetch(
+            `/api/recordings/wind/?timestamp=${timeBucket}&min_lat=${minLat}&max_lat=${maxLat}` +
+            `&min_lon=${minLon}&max_lon=${maxLon}&grid=${grid}`,
+            { signal: controller.signal }
+        );
+        if (!response.ok) {
+            throw new Error(`Wind API error: ${response.status}`);
+        }
+        const data = await response.json();
+        windState.cache.set(key, data.points || []);
+        renderWindPoints(data.points || []);
+    } catch (error) {
+        if (error.name !== 'AbortError') {
+            console.error('Failed to load wind overlay:', error);
+        }
+    } finally {
+        if (windState.pending === controller) {
+            windState.pending = null;
+        }
+    }
+}
 
 // Get timezone from coordinates using a simple approximation
 function getTimezoneFromCoordinates(lon, lat) {
@@ -264,6 +427,7 @@ function updatePlaybackTimeDisplay() {
     const currentTimestamp = playbackState.startTimestamp + playbackState.currentTime;
     const formattedTime = formatPlaybackTime(currentTimestamp);
     document.getElementById('playback-time').textContent = formattedTime;
+    updateWindOverlay();
 }
 
 // Update marker position
@@ -442,6 +606,51 @@ document.getElementById('stop-btn').addEventListener('click', function() {
 document.getElementById('play-pause-btn').disabled = true;
 document.getElementById('stop-btn').disabled = true;
 
+document.getElementById('wind-toggle').addEventListener('change', function(event) {
+    windState.enabled = event.target.checked;
+    if (!windState.enabled) {
+        windSource.clear();
+        document.getElementById('wind-tooltip').style.display = 'none';
+    } else {
+        updateWindOverlay(true);
+    }
+});
+
+map.on('moveend', function() {
+    if (windState.enabled) {
+        updateWindOverlay(true);
+    }
+});
+
+const windTooltip = document.getElementById('wind-tooltip');
+map.on('pointermove', function(event) {
+    if (!windState.enabled) {
+        windTooltip.style.display = 'none';
+        return;
+    }
+
+    const feature = map.forEachFeatureAtPixel(event.pixel, function(hit, layer) {
+        if (layer === windLayer) {
+            return hit;
+        }
+        return null;
+    });
+
+    if (feature) {
+        const speed = feature.get('speed');
+        const direction = feature.get('direction');
+        if (speed !== undefined && direction !== undefined) {
+            windTooltip.textContent = `Wind ${speed.toFixed(1)} kn @ ${Math.round(direction)}°`;
+            windTooltip.style.left = `${event.pixel[0]}px`;
+            windTooltip.style.top = `${event.pixel[1]}px`;
+            windTooltip.style.display = 'block';
+            return;
+        }
+    }
+
+    windTooltip.style.display = 'none';
+});
+
 // Get appropriate zoom level for API (returns actual zoom number, not zoom level string)
 function getZoomLevelForAPI() {
     const zoom = map.getView().getZoom();
@@ -544,6 +753,9 @@ async function loadTrack(fitToExtent = false) {
             // Initialize playback time display (show start time)
             playbackState.currentTime = 0;
             updatePlaybackTimeDisplay();
+            if (windState.enabled) {
+                updateWindOverlay(true);
+            }
             
             // Enable playback controls if we have valid track points with timestamps
             if (playbackState.trackPoints.length > 0 && playbackState.startTimestamp && playbackState.endTimestamp) {

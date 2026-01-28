@@ -5,10 +5,17 @@ Async tasks for track processing using Django-Q2.
 import logging
 import os
 from datetime import datetime, timezone
+from bisect import bisect_left
 
 from django.conf import settings
+from django_q.tasks import async_task
 
-from .models import Recording, Event
+from openmeteopy.client import OpenMeteo
+from openmeteopy.options import HistoricalOptions
+from openmeteopy.hourly import HourlyHistorical
+from openmeteopy.utils.constants import unixtime, kn
+
+from .models import Recording, Event, EventWindField
 from .gpx_parser import GPXTrackParser
 from .json_parser import JSONTrackParser
 from .track_processor import generate_zoom_levels
@@ -122,6 +129,14 @@ def process_track_upload(recording_id: str, temp_file_path: str):
                     pass
         
         recording.save()
+
+        if recording.event_id:
+            async_task(
+                'apps.tracks.tasks.compute_event_wind_field',
+                str(recording.event_id),
+                6,
+                30
+            )
         
         # Clean up temp file and directory
         try:
@@ -330,6 +345,14 @@ def process_track_crop(
             # they would be updated here as well
         
         cropped_recording.save()
+
+        if cropped_recording.event_id:
+            async_task(
+                'apps.tracks.tasks.compute_event_wind_field',
+                str(cropped_recording.event_id),
+                6,
+                30
+            )
         
         logger.info(
             f"Successfully processed cropped recording {cropped_recording_id}: "
@@ -352,3 +375,187 @@ def process_track_crop(
             pass
         
         raise
+
+
+def _ensure_utc(value):
+    if value.tzinfo:
+        return value.astimezone(timezone.utc)
+    return value.replace(tzinfo=timezone.utc)
+
+
+def _interpolate_direction(direction_a, direction_b, ratio):
+    if direction_a is None and direction_b is None:
+        return None
+    if direction_a is None:
+        return direction_b
+    if direction_b is None:
+        return direction_a
+    delta = ((direction_b - direction_a + 180) % 360) - 180
+    return (direction_a + (delta * ratio)) % 360
+
+
+def _interpolate_value(value_a, value_b, ratio):
+    if value_a is None and value_b is None:
+        return None
+    if value_a is None:
+        return value_b
+    if value_b is None:
+        return value_a
+    return value_a + (value_b - value_a) * ratio
+
+
+def _value_at_timestamp(times, values, timestamp):
+    if not times or not values:
+        return None, None, None
+
+    if timestamp <= times[0]:
+        return values[0], None, None
+    if timestamp >= times[-1]:
+        return values[-1], None, None
+
+    index = bisect_left(times, timestamp)
+    if index < len(times) and times[index] == timestamp:
+        return values[index], None, None
+
+    prev_index = max(0, index - 1)
+    next_index = min(len(times) - 1, index)
+    if times[next_index] == times[prev_index]:
+        return values[prev_index], None, None
+
+    ratio = (timestamp - times[prev_index]) / (times[next_index] - times[prev_index])
+    return values[prev_index], values[next_index], ratio
+
+
+def compute_event_wind_field(event_id: str, grid_size: int = 6, interval_minutes: int = 30):
+    """
+    Precompute wind data for an event's bounding box and time range.
+    """
+    try:
+        event = Event.objects.get(pk=event_id)
+    except Event.DoesNotExist:
+        logger.warning(f"Event {event_id} not found for wind precompute")
+        return
+
+    recordings = event.recordings.filter(
+        status='ready',
+        bounding_box__isnull=False,
+        start_time__isnull=False,
+        end_time__isnull=False
+    )
+
+    if not recordings.exists():
+        logger.info(f"No recordings ready for event {event_id}; skipping wind precompute")
+        return
+
+    min_lat = min(rec.bounding_box['min_lat'] for rec in recordings if rec.bounding_box)
+    max_lat = max(rec.bounding_box['max_lat'] for rec in recordings if rec.bounding_box)
+    min_lon = min(rec.bounding_box['min_lon'] for rec in recordings if rec.bounding_box)
+    max_lon = max(rec.bounding_box['max_lon'] for rec in recordings if rec.bounding_box)
+
+    start_time = min(rec.start_time for rec in recordings)
+    end_time = max(rec.end_time for rec in recordings)
+
+    start_time = _ensure_utc(start_time)
+    end_time = _ensure_utc(end_time)
+
+    interval_seconds = interval_minutes * 60
+    start_ts = int(start_time.timestamp())
+    end_ts = int(end_time.timestamp())
+    start_bucket = start_ts - (start_ts % interval_seconds)
+    end_bucket = end_ts - (end_ts % interval_seconds)
+    timestamps = list(range(start_bucket, end_bucket + interval_seconds, interval_seconds))
+
+    start_date = start_time.date().isoformat()
+    end_date = end_time.date().isoformat()
+
+    lat_step = (max_lat - min_lat) / (grid_size - 1) if grid_size > 1 else 0
+    lon_step = (max_lon - min_lon) / (grid_size - 1) if grid_size > 1 else 0
+
+    hourly = HourlyHistorical().windspeed_10m().winddirection_10m()
+    grid_points = []
+
+    for row in range(grid_size):
+        lat = min_lat + (row * lat_step)
+        for col in range(grid_size):
+            lon = min_lon + (col * lon_step)
+            try:
+                options = HistoricalOptions(
+                    lat,
+                    lon,
+                    windspeed_unit=kn,
+                    timeformat=unixtime,
+                    timezone='UTC',
+                    start_date=start_date,
+                    end_date=end_date
+                )
+                manager = OpenMeteo(options, hourly)
+                data = manager.get_dict()
+                hourly_data = data.get('hourly') if data else None
+                if not hourly_data:
+                    continue
+                times = hourly_data.get('time', [])
+                speeds = hourly_data.get('windspeed_10m', [])
+                directions = hourly_data.get('winddirection_10m', [])
+                if not times:
+                    continue
+                grid_points.append({
+                    'lon': lon,
+                    'lat': lat,
+                    'times': times,
+                    'speeds': speeds,
+                    'directions': directions,
+                })
+            except Exception as exc:
+                logger.warning(f"Wind fetch failed for {lat},{lon}: {exc}")
+
+    points_by_time = {}
+    for timestamp in timestamps:
+        time_points = []
+        for point in grid_points:
+            speed_a, speed_b, ratio = _value_at_timestamp(point['times'], point['speeds'], timestamp)
+            direction_a, direction_b, direction_ratio = _value_at_timestamp(point['times'], point['directions'], timestamp)
+
+            if speed_b is None:
+                speed = speed_a
+            else:
+                speed = _interpolate_value(speed_a, speed_b, ratio)
+
+            if direction_b is None:
+                direction = direction_a
+            else:
+                direction = _interpolate_direction(direction_a, direction_b, direction_ratio)
+
+            if speed is None or direction is None:
+                continue
+
+            time_points.append({
+                'lon': point['lon'],
+                'lat': point['lat'],
+                'speed': speed,
+                'direction': direction,
+            })
+
+        points_by_time[str(timestamp)] = time_points
+
+    EventWindField.objects.update_or_create(
+        event=event,
+        grid_size=grid_size,
+        interval_minutes=interval_minutes,
+        defaults={
+            'bounding_box': {
+                'min_lat': min_lat,
+                'max_lat': max_lat,
+                'min_lon': min_lon,
+                'max_lon': max_lon,
+            },
+            'start_time': start_time,
+            'end_time': end_time,
+            'data': {
+                'interval_seconds': interval_seconds,
+                'times': timestamps,
+                'points': points_by_time,
+            },
+        }
+    )
+
+    logger.info(f"Precomputed wind field for event {event_id}")

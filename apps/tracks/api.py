@@ -8,8 +8,15 @@ from rest_framework.response import Response
 from rest_framework import serializers
 from django_q.tasks import async_task
 from django.utils import timezone
+from django.core.cache import cache
+from datetime import datetime, timezone as dt_timezone
 
-from .models import Recording, Vessel, VesselPermission
+from openmeteopy.client import OpenMeteo
+from openmeteopy.options import HistoricalOptions
+from openmeteopy.hourly import HourlyHistorical
+from openmeteopy.utils.constants import unixtime, kn
+
+from .models import Recording, Vessel, VesselPermission, Event, EventWindField
 from .storage import get_signed_url, get_all_signed_urls
 from .track_processor import get_appropriate_zoom_level
 
@@ -167,6 +174,161 @@ class RecordingViewSet(viewsets.ReadOnlyModelViewSet):
                 {'error': f'Failed to generate URL: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+    @action(detail=False, methods=['get'], permission_classes=[permissions.AllowAny])
+    def wind(self, request):
+        """
+        Get wind data for a bounding box and timestamp.
+
+        Query params:
+            timestamp: Epoch seconds (required)
+            min_lat, max_lat, min_lon, max_lon: Bounding box coordinates (required for on-demand)
+            grid: Number of points per axis (optional, default 4)
+            event_token: Event share token (optional, uses stored wind data)
+            event_id: Event UUID (optional, uses stored wind data)
+        """
+        try:
+            timestamp = int(request.query_params.get('timestamp'))
+        except (TypeError, ValueError):
+            return Response(
+                {'error': 'timestamp is required and must be an integer'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        event_token = request.query_params.get('event_token')
+        event_id = request.query_params.get('event_id')
+
+        if event_token or event_id:
+            event = None
+            if event_token:
+                event = Event.objects.filter(share_token=event_token).first()
+            elif event_id:
+                event = Event.objects.filter(pk=event_id).first()
+
+            if event:
+                wind_field = EventWindField.objects.filter(
+                    event=event,
+                    grid_size=6,
+                    interval_minutes=30
+                ).first()
+                if wind_field:
+                    interval_seconds = wind_field.interval_minutes * 60
+                    time_bucket = timestamp - (timestamp % interval_seconds)
+                    points = (wind_field.data or {}).get('points', {}).get(str(time_bucket))
+                    if points is None:
+                        times = (wind_field.data or {}).get('times', [])
+                        if times:
+                            nearest = min(times, key=lambda t: abs(t - time_bucket))
+                            points = (wind_field.data or {}).get('points', {}).get(str(nearest), [])
+                        else:
+                            points = []
+                    return Response({
+                        'timestamp': time_bucket,
+                        'grid': wind_field.grid_size,
+                        'units': {
+                            'speed': 'kn',
+                            'direction': 'degrees',
+                        },
+                        'points': points,
+                    })
+
+        try:
+            min_lat = float(request.query_params.get('min_lat'))
+            max_lat = float(request.query_params.get('max_lat'))
+            min_lon = float(request.query_params.get('min_lon'))
+            max_lon = float(request.query_params.get('max_lon'))
+        except (TypeError, ValueError):
+            return Response(
+                {'error': 'Invalid bounding box parameters'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            grid = int(request.query_params.get('grid', 4))
+        except (TypeError, ValueError):
+            grid = 4
+
+        grid = max(2, min(grid, 6))
+
+        min_lat, max_lat = sorted([min_lat, max_lat])
+        min_lon, max_lon = sorted([min_lon, max_lon])
+
+        time_bucket = timestamp - (timestamp % 3600)
+        date_str = datetime.fromtimestamp(time_bucket, tz=dt_timezone.utc).date().isoformat()
+
+        cache_key = (
+            f"wind:{time_bucket}:{grid}:"
+            f"{round(min_lat, 2)}:{round(max_lat, 2)}:{round(min_lon, 2)}:{round(max_lon, 2)}"
+        )
+        cached = cache.get(cache_key)
+        if cached:
+            return Response(cached)
+
+        lat_step = (max_lat - min_lat) / (grid - 1) if grid > 1 else 0
+        lon_step = (max_lon - min_lon) / (grid - 1) if grid > 1 else 0
+
+        hourly = HourlyHistorical().windspeed_10m().winddirection_10m()
+        points = []
+
+        def fetch_point(lat, lon):
+            options = HistoricalOptions(
+                lat,
+                lon,
+                windspeed_unit=kn,
+                timeformat=unixtime,
+                timezone='UTC',
+                start_date=date_str,
+                end_date=date_str
+            )
+            manager = OpenMeteo(options, hourly)
+            data = manager.get_dict()
+            hourly_data = data.get('hourly') if data else None
+            if not hourly_data:
+                return None
+
+            times = hourly_data.get('time', [])
+            speeds = hourly_data.get('windspeed_10m', [])
+            directions = hourly_data.get('winddirection_10m', [])
+            if not times:
+                return None
+
+            try:
+                idx = times.index(time_bucket)
+            except ValueError:
+                idx = min(range(len(times)), key=lambda i: abs(times[i] - time_bucket))
+
+            if idx >= len(speeds) or idx >= len(directions):
+                return None
+
+            return {
+                'lon': lon,
+                'lat': lat,
+                'speed': speeds[idx],
+                'direction': directions[idx],
+            }
+
+        for row in range(grid):
+            lat = min_lat + (row * lat_step)
+            for col in range(grid):
+                lon = min_lon + (col * lon_step)
+                try:
+                    point = fetch_point(lat, lon)
+                except Exception:
+                    point = None
+                if point:
+                    points.append(point)
+
+        response = {
+            'timestamp': time_bucket,
+            'grid': grid,
+            'units': {
+                'speed': 'kn',
+                'direction': 'degrees',
+            },
+            'points': points,
+        }
+        cache.set(cache_key, response, 300)
+        return Response(response)
     
     @action(detail=False, methods=['get'])
     def in_bounds(self, request):

@@ -14,7 +14,7 @@ from django.views.decorators.http import require_http_methods
 from django_q.tasks import async_task
 
 from .models import Recording, Vessel, VesselPermission, Event
-from .forms import GPXUploadForm, VesselForm, VesselClaimForm, EventGPXUploadForm
+from .forms import GPXUploadForm, VesselForm, VesselClaimForm, EventGPXUploadForm, EventForm
 from django.contrib.auth import get_user_model
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
@@ -481,6 +481,15 @@ def event_list(request):
     Public access - no authentication required.
     """
     if request.user.is_authenticated:
+        if request.method == 'POST':
+            form = EventForm(request.POST)
+            if form.is_valid():
+                event = form.save()
+                messages.success(request, f'Event "{event.name}" created.')
+                return redirect('tracks:upload_to_event', token=event.share_token)
+        else:
+            form = EventForm()
+
         # Show events the user has uploaded tracks to
         user_events = Event.objects.filter(
             recordings__user=request.user
@@ -488,7 +497,8 @@ def event_list(request):
         
         return render(request, 'tracks/event_list.html', {
             'events': user_events,
-            'is_authenticated': True
+            'is_authenticated': True,
+            'event_form': form
         })
     else:
         # For anonymous users, show recent events with public tracks
@@ -499,5 +509,6 @@ def event_list(request):
         
         return render(request, 'tracks/event_list.html', {
             'events': recent_events,
-            'is_authenticated': False
+            'is_authenticated': False,
+            'event_form': None
         })

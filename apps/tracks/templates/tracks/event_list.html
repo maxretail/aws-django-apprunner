@@ -7,6 +7,69 @@
 <div class="row">
     <div class="col-12">
         <h1 class="mb-4">Events</h1>
+
+        {% if is_authenticated %}
+        <div class="d-flex justify-content-end mb-4">
+            <button class="btn btn-primary" type="button" data-bs-toggle="modal" data-bs-target="#create-event-modal">
+                Create Event
+            </button>
+        </div>
+
+        <div class="modal fade" id="create-event-modal" tabindex="-1" aria-labelledby="create-event-modal-label" aria-hidden="true">
+            <div class="modal-dialog modal-lg">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title" id="create-event-modal-label">Create Event</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                    </div>
+                    <div class="modal-body">
+                        <form method="post">
+                            {% csrf_token %}
+                            {% if event_form.non_field_errors %}
+                            <div class="alert alert-danger">
+                                {{ event_form.non_field_errors }}
+                            </div>
+                            {% endif %}
+                            <div class="row">
+                                <div class="col-md-6 mb-3">
+                                    <label class="form-label" for="{{ event_form.name.id_for_label }}">Name</label>
+                                    {{ event_form.name }}
+                                    {% for error in event_form.name.errors %}
+                                    <div class="text-danger small">{{ error }}</div>
+                                    {% endfor %}
+                                </div>
+                                <div class="col-md-3 mb-3">
+                                    <label class="form-label" for="{{ event_form.event_type.id_for_label }}">Type</label>
+                                    {{ event_form.event_type }}
+                                    {% for error in event_form.event_type.errors %}
+                                    <div class="text-danger small">{{ error }}</div>
+                                    {% endfor %}
+                                </div>
+                                <div class="col-md-3 mb-3">
+                                    <label class="form-label" for="{{ event_form.date.id_for_label }}">Date</label>
+                                    {{ event_form.date }}
+                                    {% for error in event_form.date.errors %}
+                                    <div class="text-danger small">{{ error }}</div>
+                                    {% endfor %}
+                                </div>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label" for="{{ event_form.description.id_for_label }}">Description</label>
+                                {{ event_form.description }}
+                                {% for error in event_form.description.errors %}
+                                <div class="text-danger small">{{ error }}</div>
+                                {% endfor %}
+                            </div>
+                            <div class="d-flex justify-content-end gap-2">
+                                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                                <button type="submit" class="btn btn-primary">Create Event</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endif %}
         
         {% if is_authenticated %}
         <p class="text-muted mb-4">Events you've uploaded tracks to:</p>

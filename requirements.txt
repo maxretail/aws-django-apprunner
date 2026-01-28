@@ -34,3 +34,6 @@ python-dotenv>=1.0.0
 httpx>=0.25.0
 asgiref>=3.7.0
 requests>=2.31.0
+numpy
+pandas
+openmeteopy @ git+https://github.com/m0rp43us/openmeteopy

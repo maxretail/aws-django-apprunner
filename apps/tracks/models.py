@@ -225,6 +225,30 @@ class Event(models.Model):
         return cls.objects.filter(pk__in=overlapping_events).distinct()
 
 
+class EventWindField(models.Model):
+    """
+    Precomputed wind data for an event bounding box and time range.
+    """
+    event = models.ForeignKey(
+        Event,
+        on_delete=models.CASCADE,
+        related_name='wind_fields'
+    )
+    grid_size = models.PositiveSmallIntegerField(default=6)
+    interval_minutes = models.PositiveSmallIntegerField(default=30)
+    bounding_box = models.JSONField()
+    start_time = models.DateTimeField()
+    end_time = models.DateTimeField()
+    data = models.JSONField(default=dict)
+    computed_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ('event', 'grid_size', 'interval_minutes')
+
+    def __str__(self):
+        return f"WindField {self.event_id} ({self.grid_size}x{self.grid_size}, {self.interval_minutes}m)"
+
+
 class Recording(models.Model):
     """
     A GPS track recording. The actual track data is stored on DO Spaces,

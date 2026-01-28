@@ -3,7 +3,7 @@ Forms for tracks app.
 """
 
 from django import forms
-from .models import Recording, Vessel, VesselPermission
+from .models import Recording, Vessel, VesselPermission, Event
 
 
 class GPXUploadForm(forms.Form):
@@ -77,6 +77,20 @@ class VesselClaimForm(forms.Form):
         required=False,
         help_text='Explain your connection to this vessel (optional)'
     )
+
+
+class EventForm(forms.ModelForm):
+    """Form for creating events."""
+
+    class Meta:
+        model = Event
+        fields = ['name', 'event_type', 'date', 'description']
+        widgets = {
+            'name': forms.TextInput(attrs={'class': 'form-control'}),
+            'event_type': forms.Select(attrs={'class': 'form-select'}),
+            'date': forms.DateInput(attrs={'class': 'form-control', 'type': 'date'}),
+            'description': forms.Textarea(attrs={'class': 'form-control', 'rows': 3}),
+        }
 
 
 class EventGPXUploadForm(forms.Form):

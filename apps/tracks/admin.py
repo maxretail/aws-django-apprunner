@@ -1,7 +1,8 @@
 from django.contrib import admin
 from django.utils.html import format_html
 from django.urls import reverse
-from .models import Vessel, Collection, Event, Recording, VesselPermission
+from django_q.tasks import async_task
+from .models import Vessel, Collection, Event, Recording, VesselPermission, EventWindField
 
 
 @admin.register(Vessel)
@@ -26,6 +27,7 @@ class EventAdmin(admin.ModelAdmin):
     search_fields = ['name', 'description']
     list_filter = ['event_type', 'date', 'collection']
     readonly_fields = ['share_token', 'share_url', 'created_at', 'updated_at']
+    actions = ['backfill_wind_fields']
     
     fieldsets = (
         (None, {
@@ -52,6 +54,16 @@ class EventAdmin(admin.ModelAdmin):
         return 'Save event to generate share URL'
     share_url.short_description = 'Share URL'
 
+    @admin.action(description='Backfill wind overlay for selected events')
+    def backfill_wind_fields(self, request, queryset):
+        for event in queryset:
+            async_task(
+                'apps.tracks.tasks.compute_event_wind_field',
+                str(event.id),
+                6,
+                30
+            )
+
 
 @admin.register(Recording)
 class RecordingAdmin(admin.ModelAdmin):
@@ -77,6 +89,14 @@ class RecordingAdmin(admin.ModelAdmin):
             'classes': ('collapse',)
         }),
     )
+
+
+@admin.register(EventWindField)
+class EventWindFieldAdmin(admin.ModelAdmin):
+    list_display = ['event', 'grid_size', 'interval_minutes', 'computed_at']
+    search_fields = ['event__name']
+    list_filter = ['grid_size', 'interval_minutes', 'computed_at']
+    readonly_fields = ['computed_at']
 
 
 @admin.register(VesselPermission)
