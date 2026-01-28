@@ -440,23 +440,31 @@
         color: #999;
     }
     .edit-tracks-btn {
-        padding: 8px 16px;
-        border: 1px solid #666;
-        border-radius: 4px;
+        padding: 0.375rem 0.75rem;
+        border: 1px solid #6c757d;
+        border-radius: 0.25rem;
         background: white;
-        color: #333;
-        font-size: 14px;
-        font-weight: 500;
+        color: #6c757d;
+        font-size: 0.875rem;
+        font-weight: 400;
         cursor: pointer;
         transition: all 0.2s;
+        display: inline-block;
+        text-decoration: none;
     }
-    .edit-tracks-btn:hover {
-        background: #f0f0f0;
+    .edit-tracks-btn:hover:not(:disabled) {
+        background: #f8f9fa;
+        border-color: #6c757d;
+        color: #6c757d;
     }
     .edit-tracks-btn.active {
         background: #0066cc;
         color: white;
         border-color: #0066cc;
+    }
+    .edit-tracks-btn.active:hover {
+        background: #0056b3;
+        border-color: #0056b3;
     }
     .processing-indicator {
         display: none;
@@ -595,6 +603,33 @@
         display: inline-block;
         min-width: 60px;
     }
+    .speedometer-leg-stats {
+        font-size: 11px;
+        color: #888;
+        font-family: monospace;
+        margin-top: 3px;
+        padding-top: 3px;
+        border-top: 1px solid #eee;
+        display: none;
+    }
+    .speedometer-leg-stats.active {
+        display: block;
+    }
+    .leg-stat-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        margin-bottom: 1px;
+    }
+    .leg-stat-label {
+        font-size: 9px;
+        color: #999;
+        text-transform: uppercase;
+    }
+    .leg-stat-value {
+        font-weight: 500;
+        color: #666;
+    }
     @media (max-width: 768px) {
         .speedometer-container {
             top: 5px;
@@ -663,10 +698,12 @@
                     <a href="{% url 'tracks:upload_to_event' token=event.share_token %}" class="btn btn-outline-secondary btn-sm me-2">
                         Upload Track
                     </a>
+                    <button id="edit-tracks-btn" class="edit-tracks-btn btn-sm me-2">Edit Tracks</button>
                     <a href="{% url 'tracks:home' %}" class="btn btn-outline-secondary btn-sm">
                         Home
                     </a>
                     {% else %}
+                    <button id="edit-tracks-btn" class="edit-tracks-btn btn-sm me-2">Edit Tracks</button>
                     <a href="{% url 'tracks:recording_detail' pk=recordings.0.pk %}" class="btn btn-outline-secondary btn-sm">
                         Back to Details
                     </a>
@@ -686,13 +723,30 @@
     </div>
     <div class="map-controls">
         <div class="mb-2">
-            <strong>{% if event %}Event Tracks{% else %}Track{% endif %}</strong>
-            <div class="text-muted small">{{ recordings|length }} track{{ recordings|length|pluralize }}</div>
+            <div class="d-flex justify-content-between align-items-center">
+                <div>
+                    <strong>{% if event %}Event Tracks{% else %}Track{% endif %}</strong>
+                    <div class="text-muted small">{{ recordings|length }} track{{ recordings|length|pluralize }}</div>
+                </div>
+                <div class="distance-unit-toggle">
+                    <label class="small" style="cursor: pointer; margin: 0; display: flex; align-items: center;">
+                        <span style="margin-right: 4px;">nm</span>
+                        <input type="checkbox" id="distance-unit-toggle" style="margin: 0 4px;">
+                        <span>km</span>
+                    </label>
+                </div>
+            </div>
         </div>
         <div class="mb-2">
             <label>
                 <input type="checkbox" id="wind-toggle">
                 Wind overlay
+            </label>
+        </div>
+        <div class="mb-2">
+            <label>
+                <input type="checkbox" id="segment-highlight-toggle">
+                Highlight current leg
             </label>
         </div>
         <div class="track-legend" id="track-legend">
@@ -716,11 +770,9 @@
                 <button class="speed-btn" data-speed="1">1x</button>
                 <button class="speed-btn" data-speed="10">10x</button>
                 <button class="speed-btn" data-speed="100">100x</button>
-                <button class="speed-btn active" data-speed="1000">1000x</button>
+                <button class="speed-btn active" data-speed="500">500x</button>
+                <button class="speed-btn" data-speed="1000">1000x</button>
             </div>
-        </div>
-        <div style="margin-top: 10px;">
-            <button id="edit-tracks-btn" class="edit-tracks-btn">Edit Tracks</button>
         </div>
         <div class="edit-mode-controls">
             <div class="processing-indicator" id="processing-indicator">
@@ -859,19 +911,50 @@ map.addLayer(fullTrackLayer);
 
 // Track layers - past portion (fully opaque, appears on top)
 const trackSource = new ol.source.Vector();
+// Track currently hovered segment for highlighting
+let hoveredSegment = null; // { recordingId, segmentNumber }
 const trackLayer = new ol.layer.Vector({
     source: trackSource,
     style: function(feature) {
         const color = feature.get('color') || '#0066cc';
+        const isHighlighted = feature.get('isHighlighted');
+        const segmentType = feature.get('segmentType');
+        const segmentNumber = feature.get('segmentNumber');
+        const recordingId = feature.get('recordingId');
+        
+        // Check if this feature matches the hovered segment
+        const isHovered = hoveredSegment && 
+                         hoveredSegment.recordingId === recordingId &&
+                         hoveredSegment.segmentNumber === segmentNumber &&
+                         segmentType === 'leg';
+        
+        // Use thicker line if highlighted (current segment) or hovered
+        const lineWidth = (isHighlighted || isHovered) ? 8 : 3;
+        // Use brighter color if hovered
+        const lineColor = isHovered ? adjustColorBrightness(color, 1.8) : color;
+        
         return new ol.style.Style({
             stroke: new ol.style.Stroke({
-                color: color,
-                width: 3
+                color: lineColor,
+                width: lineWidth
             })
         });
     }
 });
 map.addLayer(trackLayer);
+
+// Hover detection layer - contains full segment geometries (nearly invisible, for hover detection only)
+const hoverDetectionSource = new ol.source.Vector();
+const hoverDetectionLayer = new ol.layer.Vector({
+    source: hoverDetectionSource,
+    style: new ol.style.Style({
+        stroke: new ol.style.Stroke({
+            color: 'rgba(0, 0, 0, 0.01)', // Nearly transparent but still detectable
+            width: 10 // Wide hit area for easier hover detection
+        })
+    })
+});
+map.addLayer(hoverDetectionLayer);
 
 // Direction overlay layer for showing average heading on hover
 const directionOverlaySource = new ol.source.Vector();
@@ -1070,7 +1153,7 @@ const playbackState = {
     currentTime: 0, // seconds from start
     startTimestamp: null, // earliest timestamp across all tracks
     endTimestamp: null, // latest timestamp across all tracks
-    playbackSpeed: 1000.0, // multiplier for playback speed (default 1000x)
+    playbackSpeed: 500.0, // multiplier for playback speed (default 500x)
     animationFrame: null,
     startPlayTime: null,
     trackData: [], // array of {feature, points, color, name, vessel, fullFeature}
@@ -1083,6 +1166,10 @@ const windState = {
     lastKey: null,
     cache: new Map(),
     pending: null
+};
+
+const segmentHighlightState = {
+    enabled: false
 };
 
 function windDirectionToRotation(degreesFrom) {
@@ -1205,7 +1292,38 @@ function bearingToCompass(bearing) {
 const speedometers = {}; // Map of recordingId -> speedometer element
 const rotationState = {}; // Map of recordingId -> last rotation angle (radians)
 
-function updateSpeedometer(recordingId, vesselName, color, speed, bearing) {
+// Format speed with zero-padded two-digit integer part to reduce jitter
+function formatSpeed(value) {
+    if (value === null || value === undefined) {
+        return '--';
+    }
+    const formatted = value.toFixed(1);
+    const parts = formatted.split('.');
+    const integerPart = parts[0].padStart(2, '0');
+    return `${integerPart}.${parts[1]}`;
+}
+
+// Format speed value with unit (for display in speedometers and tooltips)
+function formatSpeedValue(value) {
+    if (value === null || value === undefined) {
+        return '--';
+    }
+    const unit = getUnit();
+    if (unit === 'km') {
+        const kmh = knotsToKmh(value);
+        const formatted = kmh.toFixed(1);
+        const parts = formatted.split('.');
+        const integerPart = parts[0].padStart(2, '0');
+        return `${integerPart}.${parts[1]}`;
+    } else {
+        const formatted = value.toFixed(1);
+        const parts = formatted.split('.');
+        const integerPart = parts[0].padStart(2, '0');
+        return `${integerPart}.${parts[1]}`;
+    }
+}
+
+function updateSpeedometer(recordingId, vesselName, color, speed, bearing, legSpeed, vmg) {
     const container = document.getElementById('speedometer-container');
     
     // Get or create speedometer element
@@ -1219,11 +1337,21 @@ function updateSpeedometer(recordingId, vesselName, color, speed, bearing) {
             <div class="speedometer-info">
                 <div class="speedometer-name">${vesselName}</div>
                 <div class="speedometer-speed">
-                    <span class="speed-value">--</span><span class="speedometer-unit">kn</span>
+                    <span class="speed-value">--</span><span class="speedometer-unit">${getSpeedUnitLabel()}</span>
                 </div>
                 <div class="speedometer-bearing">
                     <span class="speedometer-bearing-label">HDG:</span>
                     <span class="bearing-value">--</span>
+                </div>
+                <div class="speedometer-leg-stats">
+                    <div class="leg-stat-row">
+                        <span class="leg-stat-label">Leg Avg</span>
+                        <span class="leg-stat-value leg-speed-value">--</span>
+                    </div>
+                    <div class="leg-stat-row">
+                        <span class="leg-stat-label">VMG</span>
+                        <span class="leg-stat-value vmg-value">--</span>
+                    </div>
                 </div>
             </div>
         `;
@@ -1233,20 +1361,45 @@ function updateSpeedometer(recordingId, vesselName, color, speed, bearing) {
     
     // Update speed value
     const speedValue = speedometer.querySelector('.speed-value');
-    if (speed !== null && speed !== undefined) {
-        speedValue.textContent = speed.toFixed(1);
-    } else {
-        speedValue.textContent = '--';
-    }
+    speedValue.textContent = formatSpeedValue(speed);
+    
+    // Update speed unit label
+    const speedUnit = speedometer.querySelector('.speedometer-unit');
+    speedUnit.textContent = getSpeedUnitLabel();
     
     // Update bearing value
     const bearingValue = speedometer.querySelector('.bearing-value');
     if (bearing !== null && bearing !== undefined) {
         const bearingDeg = Math.round(bearing);
-        const compass = bearingToCompass(bearing);
-        bearingValue.textContent = `${bearingDeg}° ${compass}`;
+        // Zero-pad bearing to two digits to reduce jitter
+        const paddedBearing = bearingDeg.toString().padStart(2, '0');
+        bearingValue.textContent = `${paddedBearing}°`;
     } else {
         bearingValue.textContent = '--';
+    }
+    
+    // Update leg stats
+    const legStatsDiv = speedometer.querySelector('.speedometer-leg-stats');
+    const legSpeedValue = speedometer.querySelector('.leg-speed-value');
+    const vmgValue = speedometer.querySelector('.vmg-value');
+    
+    if (legSpeed !== null && legSpeed !== undefined) {
+        legSpeedValue.textContent = formatSpeedWithUnit(legSpeed, 1);
+        legStatsDiv.classList.add('active');
+    } else {
+        legSpeedValue.textContent = '--';
+    }
+    
+    if (vmg !== null && vmg !== undefined) {
+        vmgValue.textContent = formatSpeedWithUnit(vmg, 1);
+        legStatsDiv.classList.add('active');
+    } else {
+        vmgValue.textContent = '--';
+    }
+    
+    // Hide leg stats if neither value is available
+    if ((legSpeed === null || legSpeed === undefined) && (vmg === null || vmg === undefined)) {
+        legStatsDiv.classList.remove('active');
     }
 }
 
@@ -1294,6 +1447,103 @@ function calculateBearing(lat1, lon1, lat2, lon2) {
     bearing = (bearing + 360) % 360; // Normalize to 0-360
     
     return bearing;
+}
+
+// Calculate distance between two lat/lon points using haversine formula
+// Returns distance in nautical miles
+function calculateDistance(lat1, lon1, lat2, lon2) {
+    const R = 3440.065; // Earth's radius in nautical miles
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    
+    const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+              Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+              Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    const distance = R * c;
+    
+    return distance;
+}
+
+// Convert nautical miles to kilometers
+function nmToKm(nm) {
+    return nm * 1.852;
+}
+
+// Convert knots to km/h
+function knotsToKmh(knots) {
+    return knots * 1.852;
+}
+
+// Get unit preference (default: nm/kn)
+function getUnit() {
+    const saved = localStorage.getItem('distanceUnit');
+    return saved || 'nm';
+}
+
+// Set unit preference
+function setUnit(unit) {
+    localStorage.setItem('distanceUnit', unit);
+}
+
+// Format distance with appropriate unit
+function formatDistance(nm, decimals = 2) {
+    const unit = getUnit();
+    if (unit === 'km') {
+        const km = nmToKm(nm);
+        return `${km.toFixed(decimals)} km`;
+    } else {
+        return `${nm.toFixed(decimals)} nm`;
+    }
+}
+
+// Format speed with appropriate unit
+function formatSpeedWithUnit(knots, decimals = 1) {
+    const unit = getUnit();
+    if (unit === 'km') {
+        const kmh = knotsToKmh(knots);
+        return `${kmh.toFixed(decimals)} km/h`;
+    } else {
+        return `${knots.toFixed(decimals)} kn`;
+    }
+}
+
+// Get speed unit label
+function getSpeedUnitLabel() {
+    const unit = getUnit();
+    return unit === 'km' ? 'km/h' : 'kn';
+}
+
+// Adjust color brightness (factor > 1 = brighter, < 1 = darker)
+function adjustColorBrightness(color, factor) {
+    // Handle hex colors like '#0066cc'
+    if (color.startsWith('#')) {
+        const hex = color.slice(1);
+        const r = parseInt(hex.substr(0, 2), 16);
+        const g = parseInt(hex.substr(2, 2), 16);
+        const b = parseInt(hex.substr(4, 2), 16);
+        
+        const newR = Math.min(255, Math.round(r * factor));
+        const newG = Math.min(255, Math.round(g * factor));
+        const newB = Math.min(255, Math.round(b * factor));
+        
+        return `rgb(${newR}, ${newG}, ${newB})`;
+    }
+    // Handle rgb/rgba colors
+    if (color.startsWith('rgb')) {
+        const match = color.match(/\d+/g);
+        if (match && match.length >= 3) {
+            const r = Math.min(255, Math.round(parseInt(match[0]) * factor));
+            const g = Math.min(255, Math.round(parseInt(match[1]) * factor));
+            const b = Math.min(255, Math.round(parseInt(match[2]) * factor));
+            if (match.length === 4) {
+                return `rgba(${r}, ${g}, ${b}, ${match[3]})`;
+            }
+            return `rgb(${r}, ${g}, ${b})`;
+        }
+    }
+    return color; // Return original if we can't parse it
 }
 
 // Get timezone from coordinates using a simple approximation
@@ -1499,22 +1749,72 @@ function calculateAverageAngle(segmentPoints) {
 }
 
 // Calculate average speed for a segment
+// Average speed = total distance traveled / change in time
 function calculateAverageSpeed(segmentPoints) {
-    if (!segmentPoints || segmentPoints.length === 0) {
+    if (!segmentPoints || segmentPoints.length < 2) {
         return null;
     }
     
-    let totalSpeed = 0;
-    let count = 0;
-    
-    for (const point of segmentPoints) {
-        if (point.speed !== null && point.speed !== undefined && point.speed > 0) {
-            totalSpeed += point.speed;
-            count++;
+    // Calculate total distance by summing distances between consecutive points
+    let totalDistance = 0;
+    for (let i = 0; i < segmentPoints.length - 1; i++) {
+        const p1 = segmentPoints[i];
+        const p2 = segmentPoints[i + 1];
+        
+        if (p1.lat !== null && p1.lat !== undefined &&
+            p1.lon !== null && p1.lon !== undefined &&
+            p2.lat !== null && p2.lat !== undefined &&
+            p2.lon !== null && p2.lon !== undefined) {
+            totalDistance += calculateDistance(p1.lat, p1.lon, p2.lat, p2.lon);
         }
     }
     
-    return count > 0 ? totalSpeed / count : null;
+    // Calculate time difference between first and last point
+    const firstPoint = segmentPoints[0];
+    const lastPoint = segmentPoints[segmentPoints.length - 1];
+    
+    if (!firstPoint.timestamp || !lastPoint.timestamp) {
+        return null;
+    }
+    
+    const timeDiffSeconds = lastPoint.timestamp - firstPoint.timestamp;
+    if (timeDiffSeconds <= 0) {
+        return null;
+    }
+    
+    // Convert time difference to hours
+    const timeDiffHours = timeDiffSeconds / 3600;
+    
+    // Average speed = distance (nautical miles) / time (hours) = knots
+    return totalDistance / timeDiffHours;
+}
+
+// Calculate VMG (Velocity Made Good) for a segment
+// VMG = average speed × cos(angle between heading and wind)
+// For upwind: VMG toward the wind direction
+// For downwind: VMG in the downwind direction (180° from wind)
+function calculateVMG(averageSpeed, averageHeading, windDirection, pointOfSail) {
+    if (averageSpeed === null || averageHeading === null || windDirection === null) {
+        return null;
+    }
+    
+    // For downwind, we measure against the downwind direction (180° from wind)
+    const targetDirection = pointOfSail === 'downwind' 
+        ? (windDirection + 180) % 360 
+        : windDirection;
+    
+    // Calculate angle difference between heading and target direction
+    let angleDiff = Math.abs(averageHeading - targetDirection);
+    if (angleDiff > 180) {
+        angleDiff = 360 - angleDiff;
+    }
+    
+    // VMG = speed × cos(angle to target)
+    // For upwind, angle will typically be 30-50° off the wind
+    // For downwind, angle will typically be 140-170° from wind (so 10-40° from downwind direction)
+    const vmg = averageSpeed * Math.cos(angleDiff * Math.PI / 180);
+    
+    return Math.max(0, vmg); // VMG should be non-negative
 }
 
 // Check if heading is upwind relative to wind direction
@@ -1538,29 +1838,29 @@ function getHeadingBetweenPoints(p1, p2) {
     return calculateBearing(p1.lat, p1.lon, p2.lat, p2.lon);
 }
 
-// Find the exact turn point within a region by finding maximum heading change
-function findTurnPoint(trackPoints, startSearch, endSearch) {
-    let maxChange = 0;
-    let turnIndex = Math.floor((startSearch + endSearch) / 2);
-    
-    for (let i = startSearch; i <= endSearch; i++) {
-        if (i < 2 || i >= trackPoints.length - 2) continue;
-        
-        // Calculate heading change at this point using nearby points
-        const headingBefore = getHeadingBetweenPoints(trackPoints[i - 2], trackPoints[i]);
-        const headingAfter = getHeadingBetweenPoints(trackPoints[i], trackPoints[i + 2]);
-        const change = Math.abs(normalizeAngleDiff(headingAfter - headingBefore));
-        
-        if (change > maxChange) {
-            maxChange = change;
-            turnIndex = i;
-        }
-    }
-    
-    return turnIndex;
+// Determine which side of the wind the boat is on
+// Returns 'port' (wind from port/left) or 'starboard' (wind from starboard/right)
+function getWindSide(bearing, windDirection) {
+    // Calculate the angle from the wind direction to the bearing
+    // Positive = wind from starboard, Negative = wind from port
+    const diff = normalizeAngleDiff(bearing - windDirection);
+    return diff >= 0 ? 'starboard' : 'port';
 }
 
-// Segment track into tacks, gybes, and legs
+// Determine if the boat is pointing more upwind or downwind
+// Returns 'upwind' or 'downwind'
+// windDirection is where the wind is COMING FROM
+// If boat heading is close to windDirection, boat is sailing INTO the wind (upwind)
+// If boat heading is close to windDirection + 180, boat is sailing WITH the wind (downwind)
+function getPointOfSail(bearing, windDirection) {
+    // Calculate absolute angle difference between boat heading and wind source
+    const diff = Math.abs(normalizeAngleDiff(bearing - windDirection));
+    // If pointing within 90 degrees of wind source direction, it's upwind
+    // Otherwise it's downwind
+    return diff <= 90 ? 'upwind' : 'downwind';
+}
+
+// Segment track into tacks, gybes, and legs based on wind crossings
 function segmentTrack(trackPoints, windDirection) {
     if (!trackPoints || trackPoints.length < 3 || windDirection === null || windDirection === undefined) {
         // Return single leg if we can't segment
@@ -1579,65 +1879,111 @@ function segmentTrack(trackPoints, windDirection) {
     }
     
     // Configuration
-    const MIN_SEGMENT_POINTS = 8; // Minimum number of points in a leg
-    const HEADING_CHANGE_THRESHOLD = 60; // Minimum heading change to consider a turn
-    const SCAN_WINDOW = 5; // Window for detecting heading changes
+    const MIN_TIME_ON_NEW_SIDE = 60; // Minimum seconds on new side to confirm a tack/gybe
     
-    // First pass: identify potential turn regions
-    const turnRegions = [];
-    let i = SCAN_WINDOW;
+    // Calculate bearings for all points
+    const bearings = [];
+    for (let i = 0; i < trackPoints.length - 1; i++) {
+        bearings.push(getHeadingBetweenPoints(trackPoints[i], trackPoints[i + 1]));
+    }
+    // Last point uses same bearing as second-to-last
+    bearings.push(bearings[bearings.length - 1] || 0);
     
-    while (i < trackPoints.length - SCAN_WINDOW) {
-        // Calculate heading change using points before and after
-        const headingBefore = getHeadingBetweenPoints(
-            trackPoints[i - SCAN_WINDOW], 
-            trackPoints[i]
-        );
-        const headingAfter = getHeadingBetweenPoints(
-            trackPoints[i], 
-            trackPoints[Math.min(i + SCAN_WINDOW, trackPoints.length - 1)]
-        );
-        const headingChange = Math.abs(normalizeAngleDiff(headingAfter - headingBefore));
+    // Determine initial state
+    const initialBearing = bearings[0];
+    let currentSide = getWindSide(initialBearing, windDirection);
+    let currentPointOfSail = getPointOfSail(initialBearing, windDirection);
+    
+    // Find confirmed wind crossings
+    const crossings = [];
+    let potentialCrossing = null;
+    
+    for (let i = 1; i < trackPoints.length; i++) {
+        const bearing = bearings[i];
+        const side = getWindSide(bearing, windDirection);
+        const pointOfSail = getPointOfSail(bearing, windDirection);
         
-        if (headingChange >= HEADING_CHANGE_THRESHOLD) {
-            // Found a turn region - find the exact turn point
-            const searchStart = Math.max(SCAN_WINDOW, i - SCAN_WINDOW);
-            const searchEnd = Math.min(trackPoints.length - SCAN_WINDOW - 1, i + SCAN_WINDOW);
-            const turnIndex = findTurnPoint(trackPoints, searchStart, searchEnd);
-            
-            // Check if this turn is far enough from the last one
-            if (turnRegions.length === 0 || turnIndex - turnRegions[turnRegions.length - 1].index >= MIN_SEGMENT_POINTS) {
-                turnRegions.push({
-                    index: turnIndex,
-                    headingBefore: headingBefore,
-                    headingAfter: headingAfter,
-                    change: headingChange
-                });
+        if (side !== currentSide) {
+            // Boat has crossed to the other side of the wind
+            if (potentialCrossing === null) {
+                // Start tracking this potential crossing
+                potentialCrossing = {
+                    crossingIndex: i,
+                    newSide: side,
+                    oldPointOfSail: currentPointOfSail,
+                    newPointOfSail: pointOfSail,
+                    crossingTimestamp: trackPoints[i].timestamp
+                };
             }
-            
-            // Skip past this turn region
-            i = turnIndex + MIN_SEGMENT_POINTS;
         } else {
-            i++;
+            // Boat is back on the original side
+            if (potentialCrossing !== null) {
+                // Check if we were on the new side long enough
+                const timeOnNewSide = trackPoints[i].timestamp - potentialCrossing.crossingTimestamp;
+                if (timeOnNewSide >= MIN_TIME_ON_NEW_SIDE) {
+                    // This was a real crossing - but we're back now, so find the actual crossing point
+                    // The crossing is confirmed at the original crossing point
+                    crossings.push({
+                        index: potentialCrossing.crossingIndex,
+                        type: potentialCrossing.oldPointOfSail === 'upwind' ? 'tack' : 'gybe',
+                        fromSide: currentSide,
+                        toSide: potentialCrossing.newSide
+                    });
+                    // Update current side since we confirmed a crossing happened
+                    currentSide = potentialCrossing.newSide;
+                    currentPointOfSail = potentialCrossing.newPointOfSail;
+                }
+                potentialCrossing = null;
+            }
+        }
+        
+        // Check if the potential crossing has been sustained long enough
+        if (potentialCrossing !== null) {
+            const timeOnNewSide = trackPoints[i].timestamp - potentialCrossing.crossingTimestamp;
+            if (timeOnNewSide >= MIN_TIME_ON_NEW_SIDE) {
+                // Crossing is confirmed!
+                crossings.push({
+                    index: potentialCrossing.crossingIndex,
+                    type: potentialCrossing.oldPointOfSail === 'upwind' ? 'tack' : 'gybe',
+                    fromSide: currentSide,
+                    toSide: potentialCrossing.newSide
+                });
+                // Update state
+                currentSide = potentialCrossing.newSide;
+                currentPointOfSail = potentialCrossing.newPointOfSail;
+                potentialCrossing = null;
+            }
         }
     }
     
-    // Second pass: create segments between turn points
+    // Handle case where track ends while on new side
+    if (potentialCrossing !== null) {
+        const lastPoint = trackPoints[trackPoints.length - 1];
+        const timeOnNewSide = lastPoint.timestamp - potentialCrossing.crossingTimestamp;
+        if (timeOnNewSide >= MIN_TIME_ON_NEW_SIDE) {
+            crossings.push({
+                index: potentialCrossing.crossingIndex,
+                type: potentialCrossing.oldPointOfSail === 'upwind' ? 'tack' : 'gybe',
+                fromSide: currentSide,
+                toSide: potentialCrossing.newSide
+            });
+        }
+    }
+    
+    // Create segments from crossings
     const segments = [];
     let segmentStart = 0;
     let segmentNumber = 0;
     
-    for (let t = 0; t < turnRegions.length; t++) {
-        const turn = turnRegions[t];
-        
-        // Create leg segment from segmentStart to turn point
-        if (turn.index > segmentStart + 1) {
-            const legPoints = trackPoints.slice(segmentStart, turn.index + 1);
+    for (const crossing of crossings) {
+        // Create leg segment from segmentStart to crossing point
+        if (crossing.index > segmentStart) {
+            const legPoints = trackPoints.slice(segmentStart, crossing.index + 1);
             if (legPoints.length >= 2) {
                 segments.push({
                     type: 'leg',
                     start_index: segmentStart,
-                    end_index: turn.index,
+                    end_index: crossing.index,
                     points: legPoints,
                     average_angle: calculateAverageAngle(legPoints),
                     average_speed: calculateAverageSpeed(legPoints),
@@ -1646,18 +1992,13 @@ function segmentTrack(trackPoints, windDirection) {
             }
         }
         
-        // Determine maneuver type (tack or gybe)
-        const isUpwindBefore = isUpwind(turn.headingBefore, windDirection);
-        const isUpwindAfter = isUpwind(turn.headingAfter, windDirection);
-        let maneuverType = (isUpwindBefore || isUpwindAfter) ? 'tack' : 'gybe';
-        
-        // The turn point itself - create a small maneuver segment
-        const maneuverStart = Math.max(0, turn.index - 1);
-        const maneuverEnd = Math.min(trackPoints.length - 1, turn.index + 1);
+        // Create maneuver segment (tack or gybe) - small segment around the crossing
+        const maneuverStart = Math.max(0, crossing.index - 1);
+        const maneuverEnd = Math.min(trackPoints.length - 1, crossing.index + 1);
         const maneuverPoints = trackPoints.slice(maneuverStart, maneuverEnd + 1);
         
         segments.push({
-            type: maneuverType,
+            type: crossing.type,
             start_index: maneuverStart,
             end_index: maneuverEnd,
             points: maneuverPoints,
@@ -1666,8 +2007,8 @@ function segmentTrack(trackPoints, windDirection) {
             segment_number: segmentNumber++
         });
         
-        // Next leg starts at the turn point
-        segmentStart = turn.index;
+        // Next leg starts at the crossing point
+        segmentStart = crossing.index;
     }
     
     // Create final leg segment
@@ -1724,7 +2065,61 @@ function getSegmentColor(baseColor, segmentNumber) {
     }
 }
 
-// Create direction overlay line for a segment
+// Create direction overlay line for a segment using full segment data
+// This positions the overlay at the midpoint of the FULL leg, not just the traversed portion
+function createDirectionOverlayFromSegment(segment) {
+    if (!segment || !segment.points || segment.points.length < 2) {
+        return null;
+    }
+    
+    // Only show overlay for leg segments
+    if (segment.type !== 'leg' || segment.average_angle === null || segment.average_angle === undefined) {
+        return null;
+    }
+    
+    // Project all segment points to map coordinates
+    const coordinates = segment.points.map(p => ol.proj.fromLonLat([p.lon, p.lat]));
+    
+    // Get first and last points of the FULL segment
+    const firstPoint = coordinates[0];
+    const lastPoint = coordinates[coordinates.length - 1];
+    
+    // Calculate the center point of the full segment
+    const centerX = (firstPoint[0] + lastPoint[0]) / 2;
+    const centerY = (firstPoint[1] + lastPoint[1]) / 2;
+    const center = [centerX, centerY];
+    
+    // Calculate the actual length of the full segment by summing distances
+    let segmentLength = 0;
+    for (let i = 0; i < coordinates.length - 1; i++) {
+        const dx = coordinates[i + 1][0] - coordinates[i][0];
+        const dy = coordinates[i + 1][1] - coordinates[i][1];
+        segmentLength += Math.sqrt(dx * dx + dy * dy);
+    }
+    
+    // Convert average angle from degrees (0 = north, clockwise) to radians
+    // OpenLayers uses radians with 0 = east, counter-clockwise
+    const angleRad = (90 - segment.average_angle) * Math.PI / 180;
+    
+    // Extend the line to full segment length (or slightly longer for visibility)
+    const halfLength = segmentLength / 2;
+    
+    // Calculate endpoints extending from center
+    const dx = Math.cos(angleRad) * halfLength;
+    const dy = Math.sin(angleRad) * halfLength;
+    
+    const startPoint = [center[0] - dx, center[1] - dy];
+    const endPoint = [center[0] + dx, center[1] + dy];
+    
+    // Create line string
+    const directionLine = new ol.geom.LineString([startPoint, endPoint]);
+    
+    return new ol.Feature({
+        geometry: directionLine
+    });
+}
+
+// Create direction overlay line for a segment (legacy, for hover)
 function createDirectionOverlay(segmentFeature) {
     const geometry = segmentFeature.getGeometry();
     if (!geometry || geometry.getType() !== 'LineString') {
@@ -1794,6 +2189,11 @@ function updatePlaybackDisplay() {
     // Clear past tracks and markers (keep full tracks in background)
     trackSource.clear();
     markerSource.clear();
+    
+    // Clear direction overlay (will be re-added if segment highlighting is enabled)
+    if (segmentHighlightState.enabled) {
+        directionOverlaySource.clear();
+    }
     
     // Clear speedometers - they will be recreated as we process tracks
     clearSpeedometers();
@@ -1906,10 +2306,19 @@ function updatePlaybackDisplay() {
         }
         
         // Add past segments (fully opaque) on top of semi-transparent full track
+        // Also track which segment the boat is currently in for highlighting
+        let currentSegmentFeature = null;
+        let currentSegmentData = null;
+        
         if (track.segments && track.segments.length > 0) {
             track.segments.forEach(segment => {
                 // Filter segment points by current timestamp
                 const segmentPastPoints = segment.points.filter(p => p.timestamp <= currentTimestamp);
+                
+                // Check if boat is currently in this segment
+                const segmentStartTime = segment.points[0]?.timestamp || 0;
+                const segmentEndTime = segment.points[segment.points.length - 1]?.timestamp || 0;
+                const isCurrentSegment = currentTimestamp >= segmentStartTime && currentTimestamp <= segmentEndTime;
                 
                 if (segmentPastPoints.length > 1) {
                     const segmentCoords = segmentPastPoints.map(p => [p.lon, p.lat]);
@@ -1919,8 +2328,15 @@ function updatePlaybackDisplay() {
                         geometry: lineString
                     });
                     
-                    // Apply color banding
-                    const segmentColor = getSegmentColor(track.color, segment.segment_number);
+                    // Apply color banding (brighter if current segment and highlighting enabled)
+                    let segmentColor;
+                    if (isCurrentSegment && segmentHighlightState.enabled) {
+                        // Highlight current segment with brighter/thicker style
+                        segmentColor = track.color; // Use base color for highlight
+                        segmentFeature.set('isHighlighted', true);
+                    } else {
+                        segmentColor = getSegmentColor(track.color, segment.segment_number);
+                    }
                     segmentFeature.set('color', segmentColor);
                     segmentFeature.set('segmentType', segment.type);
                     segmentFeature.set('averageAngle', segment.average_angle);
@@ -1929,8 +2345,23 @@ function updatePlaybackDisplay() {
                     segmentFeature.set('recordingId', track.recordingId);
                     
                     trackSource.addFeature(segmentFeature);
+                    
+                    // Store current segment for direction overlay and speedometer
+                    if (isCurrentSegment && segment.type === 'leg') {
+                        currentSegmentFeature = segmentFeature;
+                        currentSegmentData = segment;
+                    }
                 }
             });
+            
+            // Show direction overlay for current segment if highlighting is enabled
+            // Use full segment data so the overlay stays fixed at the leg's midpoint
+            if (segmentHighlightState.enabled && currentSegmentData) {
+                const directionOverlay = createDirectionOverlayFromSegment(currentSegmentData);
+                if (directionOverlay) {
+                    directionOverlaySource.addFeature(directionOverlay);
+                }
+            }
         } else if (pastCoords.length > 1) {
             // Fallback: if no segments computed, use original single line
             const projectedCoords = pastCoords.map(coord => ol.proj.fromLonLat(coord));
@@ -1965,13 +2396,32 @@ function updatePlaybackDisplay() {
             markerSource.addFeature(marker);
         }
         
+        // Calculate leg speed and VMG for current segment
+        let legSpeed = null;
+        let vmg = null;
+        if (currentSegmentData) {
+            legSpeed = currentSegmentData.average_speed;
+            // Calculate VMG using segment's average heading, speed, and track's wind direction
+            if (track.windDirection !== null && currentSegmentData.average_angle !== null) {
+                const pointOfSail = getPointOfSail(currentSegmentData.average_angle, track.windDirection);
+                vmg = calculateVMG(
+                    currentSegmentData.average_speed,
+                    currentSegmentData.average_angle,
+                    track.windDirection,
+                    pointOfSail
+                );
+            }
+        }
+        
         // Update speedometer for this track
         updateSpeedometer(
             track.recordingId, 
             track.vessel || track.name, 
             track.color, 
             interpolatedPoint ? interpolatedPoint.speed : null,
-            interpolatedPoint ? interpolatedPoint.bearing : null
+            interpolatedPoint ? interpolatedPoint.bearing : null,
+            legSpeed,
+            vmg
         );
     });
 
@@ -2134,6 +2584,63 @@ document.getElementById('wind-toggle').addEventListener('change', function(event
     }
 });
 
+document.getElementById('segment-highlight-toggle').addEventListener('change', function(event) {
+    segmentHighlightState.enabled = event.target.checked;
+    if (!segmentHighlightState.enabled) {
+        // Clear direction overlay when disabled
+        directionOverlaySource.clear();
+    }
+    // Refresh display to show/hide highlights
+    if (playbackState.trackData.length > 0) {
+        updatePlaybackDisplay();
+    }
+});
+
+// Initialize distance unit toggle
+const distanceUnitToggle = document.getElementById('distance-unit-toggle');
+
+// Set initial state from localStorage
+const initialUnit = getUnit();
+distanceUnitToggle.checked = (initialUnit === 'km');
+
+// Function to refresh all displays (distances and speeds)
+function refreshAllDisplays() {
+    // Refresh legend display
+    if (playbackState.trackData.length > 0) {
+        const trackInfo = playbackState.trackData.map(track => ({
+            vessel: track.vessel || track.name,
+            color: track.color,
+            distance: track.distance || null
+        }));
+        
+        if (trackInfo.length > 0) {
+            let legendHtml = '';
+            trackInfo.forEach((info, idx) => {
+                const distanceText = info.distance ? ` <span class="text-muted">(${formatDistance(info.distance, 1)})</span>` : '';
+                legendHtml += `
+                    <div class="track-legend-item">
+                        <span class="track-color" style="background-color: ${info.color};"></span>
+                        <span>${info.vessel}${distanceText}</span>
+                    </div>
+                `;
+            });
+            document.getElementById('track-legend').innerHTML = legendHtml;
+        }
+    }
+    
+    // Refresh speedometers and playback display if tracks are loaded
+    if (playbackState.trackData.length > 0 && playbackState.startTimestamp && playbackState.endTimestamp) {
+        updatePlaybackDisplay();
+    }
+}
+
+// Update unit when toggle changes
+distanceUnitToggle.addEventListener('change', function(event) {
+    const unit = event.target.checked ? 'km' : 'nm';
+    setUnit(unit);
+    refreshAllDisplays();
+});
+
 map.on('moveend', function() {
     if (windState.enabled) {
         updateWindOverlay(true);
@@ -2143,29 +2650,117 @@ map.on('moveend', function() {
 const windTooltip = document.getElementById('wind-tooltip');
 const segmentTooltip = document.getElementById('segment-tooltip');
 map.on('pointermove', function(event) {
-    // Check for segment hover first
-    const segmentFeature = map.forEachFeatureAtPixel(event.pixel, function(hit, layer) {
-        if (layer === trackLayer && hit.get('segmentType')) {
+    // Check for segment hover - try hover detection layer first, then track layer as fallback
+    let hoverFeature = map.forEachFeatureAtPixel(event.pixel, function(hit, layer) {
+        if (layer === hoverDetectionLayer && hit.get('segmentType')) {
             return hit;
         }
         return null;
     });
+    
+    // Fallback to track layer if no hover feature found
+    if (!hoverFeature) {
+        hoverFeature = map.forEachFeatureAtPixel(event.pixel, function(hit, layer) {
+            if (layer === trackLayer && hit.get('segmentType')) {
+                return hit;
+            }
+            return null;
+        });
+    }
 
-    if (segmentFeature) {
-        const segmentType = segmentFeature.get('segmentType');
-        const averageAngle = segmentFeature.get('averageAngle');
-        const averageSpeed = segmentFeature.get('averageSpeed');
-        const segmentNumber = segmentFeature.get('segmentNumber');
+    if (hoverFeature) {
+        const segmentType = hoverFeature.get('segmentType');
+        const averageAngle = hoverFeature.get('averageAngle');
+        const averageSpeed = hoverFeature.get('averageSpeed');
+        const segmentNumber = hoverFeature.get('segmentNumber');
+        const recordingId = hoverFeature.get('recordingId');
+        let segmentData = hoverFeature.get('segmentData');
+        
+        // If segmentData not on feature (e.g., from trackLayer), look it up
+        // Also get the track for wind direction
+        let track = null;
+        if (!segmentData && recordingId && segmentNumber !== undefined) {
+            track = playbackState.trackData.find(t => t.recordingId === recordingId);
+            if (track && track.segments) {
+                segmentData = track.segments.find(s => s.segment_number === segmentNumber);
+            }
+        } else if (recordingId) {
+            track = playbackState.trackData.find(t => t.recordingId === recordingId);
+        }
+        
+        // Highlight the track segment if it's a leg
+        if (segmentType === 'leg' && recordingId !== undefined && segmentNumber !== undefined) {
+            const newHoveredSegment = { recordingId, segmentNumber };
+            // Only update if it's different to avoid unnecessary redraws
+            if (!hoveredSegment || hoveredSegment.recordingId !== recordingId || hoveredSegment.segmentNumber !== segmentNumber) {
+                hoveredSegment = newHoveredSegment;
+                trackSource.changed(); // Trigger style refresh
+            }
+        } else {
+            // Clear hover highlight if not a leg
+            if (hoveredSegment !== null) {
+                hoveredSegment = null;
+                trackSource.changed(); // Trigger style refresh
+            }
+        }
         
         if (averageAngle !== undefined && averageAngle !== null) {
             let tooltipText = '';
-            const speedText = averageSpeed !== null && averageSpeed !== undefined ? ` | Avg speed ${averageSpeed.toFixed(1)} kn` : '';
+            const speedText = averageSpeed !== null && averageSpeed !== undefined ? ` | Avg ${formatSpeedWithUnit(averageSpeed, 1)}` : '';
+            
+            // Calculate VMG for leg segments
+            let vmgText = '';
+            if (segmentType === 'leg' && track && track.windDirection !== null && averageSpeed !== null) {
+                const pointOfSail = getPointOfSail(averageAngle, track.windDirection);
+                const vmg = calculateVMG(averageSpeed, averageAngle, track.windDirection, pointOfSail);
+                if (vmg !== null) {
+                    vmgText = ` | VMG ${formatSpeedWithUnit(vmg, 1)}`;
+                }
+            }
+            
+            // Calculate total distance and time for leg segments
+            let distanceText = '';
+            let timeText = '';
+            if (segmentType === 'leg' && segmentData && segmentData.points && segmentData.points.length > 1) {
+                let totalDistance = 0;
+                for (let i = 0; i < segmentData.points.length - 1; i++) {
+                    const p1 = segmentData.points[i];
+                    const p2 = segmentData.points[i + 1];
+                    if (p1.lat !== null && p1.lon !== null && p2.lat !== null && p2.lon !== null) {
+                        totalDistance += calculateDistance(p1.lat, p1.lon, p2.lat, p2.lon);
+                    }
+                }
+                distanceText = ` | ${formatDistance(totalDistance, 2)}`;
+                
+                // Calculate total time for the leg
+                const firstPoint = segmentData.points[0];
+                const lastPoint = segmentData.points[segmentData.points.length - 1];
+                if (firstPoint.timestamp && lastPoint.timestamp) {
+                    const timeDiffSeconds = lastPoint.timestamp - firstPoint.timestamp;
+                    if (timeDiffSeconds > 0) {
+                        const hours = Math.floor(timeDiffSeconds / 3600);
+                        const minutes = Math.floor((timeDiffSeconds % 3600) / 60);
+                        const seconds = Math.floor(timeDiffSeconds % 60);
+                        
+                        if (hours > 0) {
+                            timeText = ` | ${hours}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+                        } else {
+                            timeText = ` | ${minutes}:${seconds.toString().padStart(2, '0')}`;
+                        }
+                    }
+                }
+            }
+            
+            // Get boat name
+            const boatName = track ? (track.vessel || track.name || '') : '';
+            const boatNameText = boatName ? `${boatName} - ` : '';
+            
             if (segmentType === 'tack') {
-                tooltipText = `Tack: Avg angle ${Math.round(averageAngle)}°${speedText}`;
+                tooltipText = `${boatNameText}Tack: Avg angle ${Math.round(averageAngle)}°${speedText}`;
             } else if (segmentType === 'gybe') {
-                tooltipText = `Gybe: Avg angle ${Math.round(averageAngle)}°${speedText}`;
+                tooltipText = `${boatNameText}Gybe: Avg angle ${Math.round(averageAngle)}°${speedText}`;
             } else {
-                tooltipText = `Leg ${segmentNumber}: Avg angle ${Math.round(averageAngle)}°${speedText}`;
+                tooltipText = `${boatNameText}Leg ${segmentNumber}: ${Math.round(averageAngle)}°${speedText}${distanceText}${timeText}${vmgText}`;
             }
             
             segmentTooltip.textContent = tooltipText;
@@ -2174,10 +2769,10 @@ map.on('pointermove', function(event) {
             segmentTooltip.style.display = 'block';
             windTooltip.style.display = 'none';
             
-            // Show direction overlay for leg segments
-            if (segmentType === 'leg') {
+            // Show direction overlay for leg segments using full segment data
+            if (segmentType === 'leg' && segmentData) {
                 directionOverlaySource.clear();
-                const directionOverlay = createDirectionOverlay(segmentFeature);
+                const directionOverlay = createDirectionOverlayFromSegment(segmentData);
                 if (directionOverlay) {
                     directionOverlaySource.addFeature(directionOverlay);
                 }
@@ -2189,8 +2784,35 @@ map.on('pointermove', function(event) {
         }
     }
     
+    // Clear hover highlight when not hovering over a segment
+    if (hoveredSegment !== null) {
+        hoveredSegment = null;
+        trackSource.changed(); // Trigger style refresh
+    }
+    
     segmentTooltip.style.display = 'none';
+    // Clear direction overlay and restore current segment overlay if highlighting is enabled
     directionOverlaySource.clear();
+    if (segmentHighlightState.enabled && !playbackState.isPlaying && playbackState.trackData.length > 0) {
+        // Restore the current segment's direction overlay
+        const currentTimestamp = playbackState.startTimestamp + playbackState.currentTime;
+        playbackState.trackData.forEach(track => {
+            if (track.segments && track.segments.length > 0) {
+                for (const segment of track.segments) {
+                    const segmentStartTime = segment.points[0]?.timestamp || 0;
+                    const segmentEndTime = segment.points[segment.points.length - 1]?.timestamp || 0;
+                    const isCurrentSegment = currentTimestamp >= segmentStartTime && currentTimestamp <= segmentEndTime;
+                    if (isCurrentSegment && segment.type === 'leg') {
+                        const directionOverlay = createDirectionOverlayFromSegment(segment);
+                        if (directionOverlay) {
+                            directionOverlaySource.addFeature(directionOverlay);
+                        }
+                        break;
+                    }
+                }
+            }
+        });
+    }
     
     // Check for wind overlay hover
     if (!windState.enabled) {
@@ -2250,8 +2872,8 @@ document.querySelectorAll('.speed-btn').forEach(btn => {
     });
 });
 
-// Initialize with default speed (1000x)
-updateSpeedButtons(1000);
+// Initialize with default speed (500x)
+updateSpeedButtons(500);
 
 // Get appropriate zoom level for API
 function getZoomLevelForAPI() {
@@ -2366,10 +2988,36 @@ async function loadEventTracks(fitToExtent = false) {
             windDirection = await calculateWindDirection(playbackState.trackData[0].points, eventToken);
         }
         
-        // Compute segments for each track
+        // Compute segments for each track and store wind direction
         for (const track of playbackState.trackData) {
+            track.windDirection = windDirection; // Store wind direction for VMG calculation
             track.segments = segmentTrack(track.points, windDirection);
         }
+        
+        // Populate hover detection layer with full segment geometries
+        hoverDetectionSource.clear();
+        playbackState.trackData.forEach(track => {
+            if (track.segments && track.segments.length > 0) {
+                track.segments.forEach(segment => {
+                    const segmentCoords = segment.points.map(p => [p.lon, p.lat]);
+                    const projectedCoords = segmentCoords.map(coord => ol.proj.fromLonLat(coord));
+                    const lineString = new ol.geom.LineString(projectedCoords);
+                    const hoverFeature = new ol.Feature({
+                        geometry: lineString
+                    });
+                    
+                    // Store segment data for tooltip display
+                    hoverFeature.set('segmentType', segment.type);
+                    hoverFeature.set('averageAngle', segment.average_angle);
+                    hoverFeature.set('averageSpeed', segment.average_speed);
+                    hoverFeature.set('segmentNumber', segment.segment_number);
+                    hoverFeature.set('recordingId', track.recordingId);
+                    hoverFeature.set('segmentData', segment); // Full segment data for direction overlay
+                    
+                    hoverDetectionSource.addFeature(hoverFeature);
+                });
+            }
+        });
         
         // Render all segments initially (when not in playback)
         if (!wasPlaying && !wasPaused) {
@@ -2475,7 +3123,7 @@ async function loadEventTracks(fitToExtent = false) {
     if (trackInfo.length > 0) {
         let legendHtml = '';
         trackInfo.forEach((info, idx) => {
-            const distanceText = info.distance ? ` <span class="text-muted">(${info.distance.toFixed(1)} nm)</span>` : '';
+            const distanceText = info.distance ? ` <span class="text-muted">(${formatDistance(info.distance, 1)})</span>` : '';
             legendHtml += `
                 <div class="track-legend-item">
                     <span class="track-color" style="background-color: ${info.color};"></span>
