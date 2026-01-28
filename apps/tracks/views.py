@@ -48,12 +48,14 @@ def home(request):
 def recording_list(request):
     """List recordings for the current user."""
     from django.db.models import Count
-    # Show recordings the user uploaded OR recordings for vessels they're connected with
-    # Only show cropped children (recordings that have been cropped)
-    # Exclude originals that have been cropped (they have cropped_versions)
-    recordings = Recording.get_accessible_recordings(request.user).filter(
-        original_recording__isnull=False  # Only show cropped recordings
-    ).annotate(
+    # Show recordings the user uploaded OR recordings for vessels they're connected with.
+    #
+    # We show only "leaf" recordings (i.e., recordings that do not have any further
+    # cropped_versions). This includes:
+    # - Original uploads (original_recording is NULL), and
+    # - Cropped children (original_recording is NOT NULL),
+    # as long as they're the most recent/active version.
+    recordings = Recording.get_accessible_recordings(request.user).annotate(
         cropped_count=Count('cropped_versions')
     ).filter(
         cropped_count=0  # Only show leaf nodes (no further crops)
@@ -109,6 +111,47 @@ def recording_map(request, pk):
     return render(request, 'tracks/event_map.html', {
         'event': None,  # No event for single recording
         'recordings': [recording]
+    })
+
+
+@login_required
+def multi_recording_map(request):
+    """
+    Full-screen map view for multiple recordings without creating an Event.
+
+    Query params:
+      - recording_id=<uuid> (repeatable)
+      - ids=<uuid,uuid,...> (comma-separated fallback)
+    """
+    recording_ids = request.GET.getlist('recording_id')
+    if not recording_ids:
+        ids_csv = (request.GET.get('ids') or '').strip()
+        if ids_csv:
+            recording_ids = [x.strip() for x in ids_csv.split(',') if x.strip()]
+
+    if not recording_ids:
+        messages.error(request, 'Select at least one track to view on the map.')
+        return redirect('tracks:recording_list')
+
+    # Load recordings, enforce access control, and keep ordering consistent with selection
+    recordings_by_id = {}
+    accessible = Recording.get_accessible_recordings(request.user).filter(
+        status='ready',
+        id__in=recording_ids,
+    ).select_related('vessel', 'event')
+    for rec in accessible:
+        recordings_by_id[str(rec.id)] = rec
+
+    recordings = [recordings_by_id.get(str(rid)) for rid in recording_ids if recordings_by_id.get(str(rid))]
+
+    if not recordings:
+        messages.error(request, 'No accessible ready tracks were found for that selection.')
+        return redirect('tracks:recording_list')
+
+    return render(request, 'tracks/event_map.html', {
+        'event': None,
+        'recordings': recordings,
+        'is_virtual_multi': True,
     })
 
 

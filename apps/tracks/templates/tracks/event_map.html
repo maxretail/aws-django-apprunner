@@ -121,6 +121,10 @@
         margin-bottom: 4px;
         font-size: 0.85em;
         line-height: 1.3;
+        transition: opacity 0.2s;
+    }
+    .track-legend-item:hover {
+        opacity: 0.7;
     }
     .track-color {
         width: 16px;
@@ -817,6 +821,15 @@
                 Highlight current leg
             </label>
         </div>
+        <div class="mb-2" id="normalize-time-control" style="display: none;">
+            <label>
+                <input type="checkbox" id="normalize-time-toggle">
+                Normalize times (sync tracks)
+            </label>
+            <div class="text-muted small" id="normalize-time-hint" style="margin-left: 20px;">
+                Shifts tracks onto the same day so playback aligns by time-of-day.
+            </div>
+        </div>
         <div class="track-legend" id="track-legend">
             <small class="text-muted">Loading...</small>
         </div>
@@ -914,6 +927,7 @@
 <script src="https://cdn.jsdelivr.net/npm/ol@v9.0.0/dist/ol.js"></script>
 <script>
 const eventToken = {% if event %}'{{ event.share_token }}'{% else %}null{% endif %};
+const isVirtualMulti = {% if is_virtual_multi %}true{% else %}false{% endif %};
 const recordings = [
     {% for recording in recordings %}
     {
@@ -922,7 +936,10 @@ const recordings = [
         vessel: '{{ recording.vessel.name|default:"Unknown"|escapejs }}',
         vesselId: '{{ recording.vessel.id|default_if_none:"" }}',
         distance: {{ recording.distance_nm|default:"null" }},
-        points: {{ recording.point_count|default:0 }}
+        points: {{ recording.point_count|default:0 }},
+        eventId: {% if recording.event %}'{{ recording.event.id }}'{% else %}null{% endif %},
+        eventToken: {% if recording.event %}'{{ recording.event.share_token }}'{% else %}null{% endif %},
+        startDate: {% if recording.start_time %}'{{ recording.start_time|date:"Y-m-d" }}'{% else %}null{% endif %}
     }{% if not forloop.last %},{% endif %}
     {% endfor %}
 ];
@@ -1003,6 +1020,9 @@ map.addLayer(windLayer);
 const trackSource = new ol.source.Vector();
 // Track currently hovered segment for highlighting
 let hoveredSegment = null; // { recordingId, segmentNumber }
+let hoveredLegendRecordingId = null; // Track which boat is hovered from legend
+let hoveredRecordingId = null; // Track which recording is hovered (for wind filtering)
+const hiddenRecordingIds = new Set(); // Track which recordings are hidden via legend checkboxes
 const trackLayer = new ol.layer.Vector({
     source: trackSource,
     style: function(feature) {
@@ -1025,10 +1045,16 @@ const trackLayer = new ol.layer.Vector({
             }
         }
         
+        const recordingId = feature.get('recordingId');
+        
+        // Hide feature if this recording is hidden via legend checkbox
+        if (recordingId && hiddenRecordingIds.has(recordingId)) {
+            return null; // Hide feature
+        }
+        
         const color = feature.get('color') || '#0066cc';
         const isHighlighted = feature.get('isHighlighted');
         const segmentNumber = feature.get('segmentNumber');
-        const recordingId = feature.get('recordingId');
         
         // Check if this feature matches the hovered segment
         const isHovered = hoveredSegment && 
@@ -1036,10 +1062,13 @@ const trackLayer = new ol.layer.Vector({
                          hoveredSegment.segmentNumber === segmentNumber &&
                          segmentType === 'leg';
         
-        // Use thicker line if highlighted (current segment) or hovered
-        const lineWidth = (isHighlighted || isHovered) ? 8 : 3;
-        // Use brighter color if hovered
-        const lineColor = isHovered ? adjustColorBrightness(color, 1.8) : color;
+        // Check if this recording is hovered from legend (highlight all segments)
+        const isLegendHovered = hoveredLegendRecordingId === recordingId;
+        
+        // Use thicker line if highlighted (current segment), hovered segment, or legend hovered
+        const lineWidth = (isHighlighted || isHovered || isLegendHovered) ? 8 : 3;
+        // Use brighter color if hovered or legend hovered
+        const lineColor = (isHovered || isLegendHovered) ? adjustColorBrightness(color, 1.8) : color;
         
         return new ol.style.Style({
             stroke: new ol.style.Stroke({
@@ -1173,6 +1202,13 @@ const markerSource = new ol.source.Vector();
 const markerLayer = new ol.layer.Vector({
     source: markerSource,
     style: function(feature) {
+        const recordingId = feature.get('recordingId');
+        
+        // Hide marker if this recording is hidden via legend checkbox
+        if (recordingId && hiddenRecordingIds.has(recordingId)) {
+            return null; // Hide marker
+        }
+        
         const color = feature.get('color') || '#ff0000';
         const bearing = feature.get('bearing') || 0; // Bearing in degrees (0 = north, clockwise)
         
@@ -1273,6 +1309,44 @@ function getColorForVessel(vesselId, vesselName) {
     return colors[idx];
 }
 
+// Get display name for vessel, adding date if there are duplicates in multi-event view
+function getVesselDisplayName(track) {
+    if (!track) return '';
+    
+    const vesselName = track.vessel || track.name || '';
+    if (!vesselName || !isVirtualMulti || playbackState.trackData.length <= 1) {
+        return vesselName;
+    }
+    
+    // Check if there are duplicate vessel names
+    const vesselCounts = new Map();
+    playbackState.trackData.forEach(t => {
+        const name = t.vessel || t.name || '';
+        if (name) {
+            const key = t.vesselId || name; // Use vesselId if available, otherwise name
+            if (!vesselCounts.has(key)) {
+                vesselCounts.set(key, []);
+            }
+            vesselCounts.get(key).push(t);
+        }
+    });
+    
+    // Check if this vessel appears multiple times
+    const key = track.vesselId || vesselName;
+    const tracksWithSameVessel = vesselCounts.get(key) || [];
+    
+    if (tracksWithSameVessel.length > 1 && track.startDate) {
+        // Format date as "MMM DD" (e.g., "Jan 28")
+        const date = new Date(track.startDate + 'T00:00:00');
+        const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        const month = monthNames[date.getMonth()];
+        const day = date.getDate();
+        return `${vesselName} (${month} ${day})`;
+    }
+    
+    return vesselName;
+}
+
 // Playback state
 const playbackState = {
     isPlaying: false,
@@ -1285,14 +1359,18 @@ const playbackState = {
     startPlayTime: null,
     trackData: [], // array of {feature, points, color, name, vessel, fullFeature}
     timezone: null,
-    isUpdatingSlider: false // flag to prevent feedback loops
+    isUpdatingSlider: false, // flag to prevent feedback loops
+    normalizeTimeEnabled: false,
+    normalizeAnchorDayStart: null
 };
 
 const windState = {
     enabled: false,
     lastKey: null,
     cache: new Map(),
-    pending: null
+    pending: null,
+    lastUpdateTime: 0,
+    updateThrottleMs: 2000 // Update wind overlay at most every 2 seconds of playback
 };
 
 const segmentHighlightState = {
@@ -1337,7 +1415,18 @@ function getWindExtent() {
 
 function renderWindPoints(points) {
     windSource.clear();
-    points.forEach(point => {
+    
+    // Filter points based on hovered recording if applicable
+    let filteredPoints = points;
+    if (hoveredRecordingId && playbackState.normalizeTimeEnabled && playbackState.trackData.length > 1) {
+        // Only show wind points from the hovered track's event
+        const hoveredTrack = playbackState.trackData.find(t => t.recordingId === hoveredRecordingId);
+        if (hoveredTrack && hoveredTrack.eventToken) {
+            filteredPoints = points.filter(p => p.eventToken === hoveredTrack.eventToken);
+        }
+    }
+    
+    filteredPoints.forEach(point => {
         const feature = new ol.Feature({
             geometry: new ol.geom.Point(
                 ol.proj.fromLonLat([point.lon, point.lat])
@@ -1345,6 +1434,7 @@ function renderWindPoints(points) {
         });
         feature.set('speed', point.speed);
         feature.set('direction', point.direction);
+        feature.set('eventToken', point.eventToken); // Store for filtering
         windSource.addFeature(feature);
     });
 }
@@ -1359,16 +1449,173 @@ async function updateWindOverlay(force = false) {
         return;
     }
 
+    const extent = getWindExtent();
+    const [minLon, minLat, maxLon, maxLat] = extent;
+    
+    // If normalization is enabled and we have multiple tracks with events, fetch wind per-track
+    if (playbackState.normalizeTimeEnabled && playbackState.trackData.length > 1) {
+        const tracksWithEvents = playbackState.trackData.filter(t => t.eventToken);
+        if (tracksWithEvents.length > 0) {
+            // Throttle updates to reduce jitter
+            const currentNormalizedTime = playbackState.startTimestamp + playbackState.currentTime;
+            const intervalSeconds = 1800; // Event wind uses 30min intervals
+            const normalizedTimeBucket = Math.floor(currentNormalizedTime / intervalSeconds) * intervalSeconds;
+            
+            // Create cache key based on normalized time bucket and extent
+            const cacheKey = `multi:${normalizedTimeBucket}:${extent.map(v => v.toFixed(2)).join(',')}`;
+            
+            // Check cache first
+            if (!force && windState.cache.has(cacheKey)) {
+                renderWindPoints(windState.cache.get(cacheKey));
+                return;
+            }
+            
+            // Throttle updates: only update if enough playback time has passed
+            const playbackTimeSinceLastUpdate = playbackState.currentTime - windState.lastUpdateTime;
+            if (!force && playbackTimeSinceLastUpdate < (windState.updateThrottleMs / 1000 * playbackState.playbackSpeed)) {
+                return; // Skip update if too soon
+            }
+            
+            // Abort any pending request
+            if (windState.pending) {
+                windState.pending.abort();
+            }
+            const controller = new AbortController();
+            windState.pending = controller;
+            
+            try {
+                // Fetch wind for each track's event using original timestamps
+                // Use consistent normalized time bucket, then convert to each track's original time
+                const windPromises = tracksWithEvents.map(async (track) => {
+                    // Convert normalized time bucket back to original time for this track
+                    const originalStart = track.originalStartTimestamp || (track.originalPoints?.[0]?.originalTimestamp || track.points[0]?.originalTimestamp);
+                    if (!originalStart) return null;
+                    
+                    // Calculate offset between normalized and original start
+                    const normalizedStart = track.points[0]?.timestamp;
+                    const offset = normalizedStart - originalStart;
+                    const originalTimeBucket = normalizedTimeBucket - offset;
+                    
+                    const grid = 6;
+                    
+                    try {
+                        const response = await fetch(
+                            `/api/recordings/wind/?timestamp=${originalTimeBucket}&min_lat=${minLat}&max_lat=${maxLat}` +
+                            `&min_lon=${minLon}&max_lon=${maxLon}&grid=${grid}&event_token=${track.eventToken}`,
+                            { signal: controller.signal }
+                        );
+                        if (!response.ok) {
+                            throw new Error(`Wind API error: ${response.status}`);
+                        }
+                        const data = await response.json();
+                        return { points: data.points || [], eventToken: track.eventToken };
+                    } catch (error) {
+                        if (error.name !== 'AbortError') {
+                            console.error(`Failed to load wind for track ${track.recordingId}:`, error);
+                        }
+                        return null;
+                    }
+                });
+                
+                const windResults = await Promise.all(windPromises);
+                
+                // Merge wind points from all tracks with better deduplication
+                // Use a spatial grid to average nearby points for smoother display
+                // Group by eventToken first, then merge spatially within each event
+                const gridTolerance = 0.01; // ~1km tolerance for merging points
+                const windGridByEvent = new Map(); // eventToken -> Map of grid cells
+                
+                windResults.forEach(result => {
+                    if (result && result.points && result.eventToken) {
+                        if (!windGridByEvent.has(result.eventToken)) {
+                            windGridByEvent.set(result.eventToken, new Map());
+                        }
+                        const eventGrid = windGridByEvent.get(result.eventToken);
+                        
+                        result.points.forEach(point => {
+                            // Round to grid tolerance for merging nearby points
+                            const gridLat = Math.round(point.lat / gridTolerance) * gridTolerance;
+                            const gridLon = Math.round(point.lon / gridTolerance) * gridTolerance;
+                            const key = `${gridLat.toFixed(4)},${gridLon.toFixed(4)}`;
+                            
+                            if (!eventGrid.has(key)) {
+                                eventGrid.set(key, {
+                                    count: 1,
+                                    sumSpeed: point.speed,
+                                    sumDirection: point.direction,
+                                    lat: gridLat,
+                                    lon: gridLon
+                                });
+                            } else {
+                                const existing = eventGrid.get(key);
+                                existing.count++;
+                                existing.sumSpeed += point.speed;
+                                // Average direction using circular mean
+                                const dirRad1 = existing.sumDirection * Math.PI / 180;
+                                const dirRad2 = point.direction * Math.PI / 180;
+                                const avgDirRad = Math.atan2(
+                                    (Math.sin(dirRad1) + Math.sin(dirRad2)) / 2,
+                                    (Math.cos(dirRad1) + Math.cos(dirRad2)) / 2
+                                );
+                                existing.sumDirection = avgDirRad * 180 / Math.PI;
+                            }
+                        });
+                    }
+                });
+                
+                // Flatten all grid cells, preserving eventToken
+                const mergedPoints = [];
+                windGridByEvent.forEach((eventGrid, eventToken) => {
+                    eventGrid.forEach((item) => {
+                        mergedPoints.push({
+                            lat: item.lat,
+                            lon: item.lon,
+                            speed: item.sumSpeed / item.count,
+                            direction: item.sumDirection >= 0 ? item.sumDirection : item.sumDirection + 360,
+                            eventToken: eventToken
+                        });
+                    });
+                });
+                
+                // Cache the result
+                windState.cache.set(cacheKey, mergedPoints);
+                windState.lastUpdateTime = playbackState.currentTime;
+                windState.lastKey = cacheKey;
+                
+                renderWindPoints(mergedPoints);
+            } catch (error) {
+                if (error.name !== 'AbortError') {
+                    console.error('Failed to load multi-event wind overlay:', error);
+                }
+            } finally {
+                if (windState.pending === controller) {
+                    windState.pending = null;
+                }
+            }
+            return;
+        }
+    }
+    
+    // Standard single-event or on-demand wind fetch
     const timestamp = playbackState.startTimestamp + playbackState.currentTime;
     const intervalSeconds = eventToken ? 1800 : 3600;
     const timeBucket = Math.floor(timestamp / intervalSeconds) * intervalSeconds;
-    const extent = getWindExtent();
     const grid = eventToken ? 6 : 4;
     const key = `${timeBucket}:${grid}:${extent.map(value => value.toFixed(2)).join(',')}`;
 
     if (!force && key === windState.lastKey) {
         return;
     }
+    
+    // Throttle updates for standard wind fetch too
+    if (!force) {
+        const playbackTimeSinceLastUpdate = playbackState.currentTime - windState.lastUpdateTime;
+        const throttleSeconds = windState.updateThrottleMs / 1000 / playbackState.playbackSpeed;
+        if (playbackTimeSinceLastUpdate < throttleSeconds) {
+            return; // Skip update if too soon
+        }
+    }
+    
     windState.lastKey = key;
 
     if (windState.cache.has(key)) {
@@ -1383,7 +1630,6 @@ async function updateWindOverlay(force = false) {
     windState.pending = controller;
 
     try {
-        const [minLon, minLat, maxLon, maxLat] = extent;
         const eventParam = eventToken ? `&event_token=${eventToken}` : '';
         const response = await fetch(
             `/api/recordings/wind/?timestamp=${timeBucket}&min_lat=${minLat}&max_lat=${maxLat}` +
@@ -1395,6 +1641,7 @@ async function updateWindOverlay(force = false) {
         }
         const data = await response.json();
         windState.cache.set(key, data.points || []);
+        windState.lastUpdateTime = playbackState.currentTime;
         renderWindPoints(data.points || []);
     } catch (error) {
         if (error.name !== 'AbortError') {
@@ -1453,8 +1700,20 @@ function formatSpeedValue(value) {
 function updateSpeedometer(recordingId, vesselName, color, speed, bearing, legSpeed, vmg) {
     const container = document.getElementById('speedometer-container');
     
+    // Hide speedometer if this recording is hidden via legend checkbox
+    if (recordingId && hiddenRecordingIds.has(recordingId)) {
+        const speedometer = speedometers[recordingId];
+        if (speedometer) {
+            speedometer.style.display = 'none';
+        }
+        return;
+    }
+    
     // Get or create speedometer element
     let speedometer = speedometers[recordingId];
+    if (speedometer) {
+        speedometer.style.display = ''; // Show speedometer if it was hidden
+    }
     if (!speedometer) {
         speedometer = document.createElement('div');
         speedometer.className = 'speedometer';
@@ -1698,12 +1957,68 @@ function extractTrackPoints(trackData) {
             points.push({
                 lon: coord[0],
                 lat: coord[1],
-                timestamp: coord[2],
+                timestamp: coord[2], // may be normalized later
                 speed: coord[3] || null  // Speed in knots (or null if not available)
             });
         }
     }
     return points;
+}
+
+function dayStartEpochSeconds(epochSeconds) {
+    // UTC day start
+    return Math.floor(epochSeconds / 86400) * 86400;
+}
+
+function tracksSpanMultipleDays(tracks) {
+    const dayStarts = new Set();
+    for (const t of tracks) {
+        // Check original timestamp before normalization
+        const ts = t?.originalPoints?.[0]?.originalTimestamp || t?.points?.[0]?.originalTimestamp || t?.points?.[0]?.timestamp;
+        if (typeof ts === 'number' && ts > 0) {
+            dayStarts.add(dayStartEpochSeconds(ts));
+        }
+    }
+    return dayStarts.size > 1;
+}
+
+function applyTimeNormalization(tracks) {
+    if (!tracks || tracks.length === 0) return;
+
+    // Use earliest start time across tracks as the anchor day
+    let earliest = null;
+    for (const t of tracks) {
+        const ts = t?.originalPoints?.[0]?.originalTimestamp || t?.points?.[0]?.originalTimestamp || t?.points?.[0]?.timestamp;
+        if (typeof ts === 'number' && ts > 0) {
+            earliest = (earliest === null) ? ts : Math.min(earliest, ts);
+        }
+    }
+    if (earliest === null) return;
+
+    const anchorDayStart = dayStartEpochSeconds(earliest);
+    playbackState.normalizeAnchorDayStart = anchorDayStart;
+
+    // Shift each track by whole-day offset so that time-of-day aligns to the anchor day.
+    // Keep original timestamps intact for wind queries
+    for (const track of tracks) {
+        if (!track.points || track.points.length === 0) continue;
+        const originalStart = track.originalPoints?.[0]?.originalTimestamp || track.points[0].originalTimestamp || track.points[0].timestamp;
+        const trackDayStart = dayStartEpochSeconds(originalStart);
+        const delta = anchorDayStart - trackDayStart;
+        if (delta === 0) continue;
+        
+        // Normalize timestamps in points array (used for playback)
+        for (let i = 0; i < track.points.length; i++) {
+            const p = track.points[i];
+            if (typeof p.originalTimestamp === 'number' && p.originalTimestamp > 0) {
+                p.timestamp = p.originalTimestamp + delta;
+            } else if (typeof p.timestamp === 'number' && p.timestamp > 0) {
+                // Fallback: store original before normalizing
+                p.originalTimestamp = p.timestamp;
+                p.timestamp = p.timestamp + delta;
+            }
+        }
+    }
 }
 
 // Format time in local timezone
@@ -1804,7 +2119,8 @@ async function calculateWindDirection(trackPoints, eventToken) {
     // Try to get wind direction from event wind data
     if (eventToken && trackPoints.length > 0) {
         try {
-            const startTimestamp = trackPoints[0].timestamp;
+            // Use originalTimestamp if available (for normalized tracks), otherwise use timestamp
+            const startTimestamp = trackPoints[0].originalTimestamp || trackPoints[0].timestamp;
             const timeBucket = Math.floor(startTimestamp / 1800) * 1800;
             
             // Get bounding box from track points
@@ -1946,7 +2262,7 @@ function calculateVMG(averageSpeed, averageHeading, windDirection, pointOfSail) 
 
 // Fetch average wind speed for a leg's time span and geographic area
 // Only fetches if eventToken is available (wind data exists)
-async function fetchLegWindSpeed(segment, eventToken) {
+async function fetchLegWindSpeed(segment, eventToken, track = null) {
     if (!segment || !segment.points || segment.points.length < 2 || !eventToken) {
         return null;
     }
@@ -1959,8 +2275,17 @@ async function fetchLegWindSpeed(segment, eventToken) {
             return null;
         }
         
-        // Use middle timestamp for wind data query
-        const midTimestamp = Math.floor((firstPoint.timestamp + lastPoint.timestamp) / 2);
+        // If normalization is enabled, convert normalized timestamp back to original
+        let midTimestamp = Math.floor((firstPoint.timestamp + lastPoint.timestamp) / 2);
+        if (playbackState.normalizeTimeEnabled && track) {
+            // Convert normalized timestamp back to original timestamp
+            const originalStart = track.originalStartTimestamp || (track.originalPoints?.[0]?.originalTimestamp || track.points[0]?.originalTimestamp);
+            if (originalStart) {
+                const normalizedStart = track.points[0]?.timestamp;
+                const offset = normalizedStart - originalStart;
+                midTimestamp = midTimestamp - offset;
+            }
+        }
         const intervalSeconds = 1800; // 30 minutes for events
         const timeBucket = Math.floor(midTimestamp / intervalSeconds) * intervalSeconds;
         
@@ -2038,7 +2363,7 @@ function calculateLegStats(segment, track, tws = null) {
         return null;
     }
     
-    const boatName = track ? (track.vessel || track.name || '') : '';
+    const boatName = track ? getVesselDisplayName(track) : '';
     const legNumber = segment.segment_number;
     const recordingId = track ? track.recordingId : null;
     const angle = segment.average_angle !== null && segment.average_angle !== undefined 
@@ -2133,8 +2458,10 @@ async function buildLegsTableData() {
             track.segments.forEach(segment => {
                 if (segment.type === 'leg') {
                     legSegments.push({ segment, track });
-                    if (eventToken) {
-                        windSpeedPromises.push(fetchLegWindSpeed(segment, eventToken));
+                    // Use track's eventToken if available, otherwise fall back to global eventToken
+                    const trackEventToken = track.eventToken || eventToken;
+                    if (trackEventToken) {
+                        windSpeedPromises.push(fetchLegWindSpeed(segment, trackEventToken, track));
                     } else {
                         windSpeedPromises.push(Promise.resolve(null));
                     }
@@ -2407,6 +2734,61 @@ function setupTableSorting() {
 function updateMapLegVisibility(filter) {
     // Trigger style refresh to apply filter
     trackSource.changed();
+}
+
+// Setup legend hover handlers for track highlighting and visibility toggles
+function setupLegendHover() {
+    const legendItems = document.querySelectorAll('.track-legend-item[data-recording-id]');
+    legendItems.forEach(item => {
+        const recordingId = item.getAttribute('data-recording-id');
+        
+        // Setup hover for highlighting (skip if hovering over checkbox)
+        item.addEventListener('mouseenter', function(e) {
+            // Don't highlight if hovering directly over checkbox
+            if (e.target.type === 'checkbox') return;
+            hoveredLegendRecordingId = recordingId;
+            trackSource.changed(); // Trigger style refresh to highlight all segments
+        });
+        
+        item.addEventListener('mouseleave', function(e) {
+            // Don't clear highlight if moving to checkbox
+            if (e.relatedTarget && e.relatedTarget.type === 'checkbox') return;
+            hoveredLegendRecordingId = null;
+            trackSource.changed(); // Trigger style refresh to clear highlight
+        });
+        
+        // Setup checkbox for visibility toggle
+        const checkbox = item.querySelector('.track-visibility-checkbox');
+        if (checkbox) {
+            checkbox.addEventListener('change', function(e) {
+                e.stopPropagation(); // Prevent triggering legend hover
+                if (this.checked) {
+                    hiddenRecordingIds.delete(recordingId);
+                } else {
+                    hiddenRecordingIds.add(recordingId);
+                }
+                // Refresh map display
+                trackSource.changed();
+                markerSource.changed();
+                // Update speedometer visibility
+                updateSpeedometerVisibility();
+            });
+        }
+    });
+}
+
+// Update speedometer visibility based on hiddenRecordingIds
+function updateSpeedometerVisibility() {
+    Object.keys(speedometers).forEach(recordingId => {
+        const speedometer = speedometers[recordingId];
+        if (speedometer) {
+            if (hiddenRecordingIds.has(recordingId)) {
+                speedometer.style.display = 'none';
+            } else {
+                speedometer.style.display = '';
+            }
+        }
+    });
 }
 
 // Setup table row hover handlers for map highlighting
@@ -2800,6 +3182,48 @@ function createDirectionOverlay(segmentFeature) {
     });
 }
 
+// Render full segments for all tracks (no time-based reveal)
+function renderFullSegments(tracks) {
+    trackSource.clear();
+    tracks.forEach(track => {
+        if (track.segments && track.segments.length > 0) {
+            track.segments.forEach(segment => {
+                const segmentCoords = segment.points.map(p => [p.lon, p.lat]);
+                const projectedCoords = segmentCoords.map(coord => ol.proj.fromLonLat(coord));
+                const lineString = new ol.geom.LineString(projectedCoords);
+                const segmentFeature = new ol.Feature({
+                    geometry: lineString
+                });
+                
+                // Apply color banding
+                const segmentColor = getSegmentColor(track.color, segment.segment_number);
+                segmentFeature.set('color', segmentColor);
+                segmentFeature.set('segmentType', segment.type);
+                segmentFeature.set('averageAngle', segment.average_angle);
+                segmentFeature.set('averageSpeed', segment.average_speed);
+                segmentFeature.set('segmentNumber', segment.segment_number);
+                segmentFeature.set('recordingId', track.recordingId);
+                
+                // Store pointOfSail for filtering (upwind/downwind)
+                if (segment.type === 'leg' && track.windDirection !== null && segment.average_angle !== null) {
+                    const pointOfSail = getPointOfSail(segment.average_angle, track.windDirection);
+                    segmentFeature.set('pointOfSail', pointOfSail);
+                }
+                
+                trackSource.addFeature(segmentFeature);
+            });
+        } else if (track.points && track.points.length > 1) {
+            const projectedCoords = track.points.map(p => ol.proj.fromLonLat([p.lon, p.lat]));
+            const lineString = new ol.geom.LineString(projectedCoords);
+            const trackFeature = new ol.Feature({
+                geometry: lineString
+            });
+            trackFeature.set('color', track.color);
+            trackSource.addFeature(trackFeature);
+        }
+    });
+}
+
 // Update markers and track display during playback
 function updatePlaybackDisplay() {
     if (playbackState.trackData.length === 0) {
@@ -3006,7 +3430,7 @@ function updatePlaybackDisplay() {
             }
             marker.set('directionAngle', smoothedAngle); // Direct angle from vector (smoothed)
             marker.set('recordingId', track.recordingId);
-            marker.set('vessel', track.vessel || track.name);
+            marker.set('vessel', getVesselDisplayName(track));
             markerSource.addFeature(marker);
         }
         
@@ -3030,7 +3454,7 @@ function updatePlaybackDisplay() {
         // Update speedometer for this track
         updateSpeedometer(
             track.recordingId, 
-            track.vessel || track.name, 
+            getVesselDisplayName(track), 
             track.color, 
             interpolatedPoint ? interpolatedPoint.speed : null,
             interpolatedPoint ? interpolatedPoint.bearing : null,
@@ -3121,12 +3545,8 @@ function stopPlayback() {
     // Clear rotation smoothing state
     Object.keys(rotationState).forEach(key => delete rotationState[key]);
     
-    // Restore full tracks (clear background layer, show normal tracks)
-    fullTrackSource.clear();
-    trackSource.clear();
-    playbackState.trackData.forEach(track => {
-        trackSource.addFeature(track.fullFeature);
-    });
+    // Restore full segments (no time-based reveal)
+    renderFullSegments(playbackState.trackData);
 }
 
 // Setup playback controls
@@ -3210,6 +3630,15 @@ document.getElementById('segment-highlight-toggle').addEventListener('change', f
     }
 });
 
+// Normalize time toggle (virtual multi-track view)
+const normalizeTimeToggle = document.getElementById('normalize-time-toggle');
+if (normalizeTimeToggle) {
+    normalizeTimeToggle.addEventListener('change', function(event) {
+        playbackState.normalizeTimeEnabled = event.target.checked;
+        loadEventTracks(false);
+    });
+}
+
 // Initialize distance unit toggle
 const distanceUnitToggle = document.getElementById('distance-unit-toggle');
 
@@ -3222,7 +3651,8 @@ function refreshAllDisplays() {
     // Refresh legend display
     if (playbackState.trackData.length > 0) {
         const trackInfo = playbackState.trackData.map(track => ({
-            vessel: track.vessel || track.name,
+            recordingId: track.recordingId,
+            vessel: getVesselDisplayName(track),
             color: track.color,
             distance: track.distance || null
         }));
@@ -3231,14 +3661,19 @@ function refreshAllDisplays() {
             let legendHtml = '';
             trackInfo.forEach((info, idx) => {
                 const distanceText = info.distance ? ` <span class="text-muted">(${formatDistance(info.distance, 1)})</span>` : '';
+                const isChecked = !hiddenRecordingIds.has(info.recordingId);
                 legendHtml += `
-                    <div class="track-legend-item">
+                    <div class="track-legend-item" data-recording-id="${info.recordingId}" style="cursor: pointer;">
+                        <input type="checkbox" class="track-visibility-checkbox" ${isChecked ? 'checked' : ''} style="margin-right: 6px; cursor: pointer;">
                         <span class="track-color" style="background-color: ${info.color};"></span>
                         <span>${info.vessel}${distanceText}</span>
                     </div>
                 `;
             });
             document.getElementById('track-legend').innerHTML = legendHtml;
+            
+            // Setup legend hover handlers
+            setupLegendHover();
         }
     }
     
@@ -3288,29 +3723,67 @@ map.on('pointermove', function(event) {
             return null;
         });
     }
-
-    if (hoverFeature) {
-        const segmentType = hoverFeature.get('segmentType');
-        const averageAngle = hoverFeature.get('averageAngle');
-        const averageSpeed = hoverFeature.get('averageSpeed');
-        const segmentNumber = hoverFeature.get('segmentNumber');
-        const recordingId = hoverFeature.get('recordingId');
-        let segmentData = hoverFeature.get('segmentData');
-        
-        // If segmentData not on feature (e.g., from trackLayer), look it up
-        // Also get the track for wind direction
-        let track = null;
-        if (!segmentData && recordingId && segmentNumber !== undefined) {
-            track = playbackState.trackData.find(t => t.recordingId === recordingId);
-            if (track && track.segments) {
-                segmentData = track.segments.find(s => s.segment_number === segmentNumber);
+    
+    // Also check for full track features (for wind filtering even when not on a segment)
+    let trackFeature = null;
+    if (!hoverFeature) {
+        trackFeature = map.forEachFeatureAtPixel(event.pixel, function(hit, layer) {
+            if (layer === trackLayer && hit.get('recordingId')) {
+                return hit;
             }
-        } else if (recordingId) {
+            return null;
+        });
+    }
+
+    // Determine recordingId from either hoverFeature (segment) or trackFeature (full track)
+    const recordingId = hoverFeature ? hoverFeature.get('recordingId') : (trackFeature ? trackFeature.get('recordingId') : null);
+    
+    if (hoverFeature || trackFeature) {
+        let segmentType, averageAngle, averageSpeed, segmentNumber, segmentData, track;
+        
+        if (hoverFeature) {
+            segmentType = hoverFeature.get('segmentType');
+            averageAngle = hoverFeature.get('averageAngle');
+            averageSpeed = hoverFeature.get('averageSpeed');
+            segmentNumber = hoverFeature.get('segmentNumber');
+            segmentData = hoverFeature.get('segmentData');
+            
+            // If segmentData not on feature (e.g., from trackLayer), look it up
+            // Also get the track for wind direction
+            if (!segmentData && recordingId && segmentNumber !== undefined) {
+                track = playbackState.trackData.find(t => t.recordingId === recordingId);
+                if (track && track.segments) {
+                    segmentData = track.segments.find(s => s.segment_number === segmentNumber);
+                }
+            } else if (recordingId) {
+                track = playbackState.trackData.find(t => t.recordingId === recordingId);
+            }
+        } else if (trackFeature && recordingId) {
+            // Just hovering over track, not a specific segment
             track = playbackState.trackData.find(t => t.recordingId === recordingId);
         }
         
-        // Highlight the track segment if it's a leg
-        if (segmentType === 'leg' && recordingId !== undefined && segmentNumber !== undefined) {
+        // Update hovered recording ID for wind filtering
+        const newHoveredRecordingId = recordingId || null;
+        if (newHoveredRecordingId !== hoveredRecordingId) {
+            hoveredRecordingId = newHoveredRecordingId;
+            // Refresh wind overlay to show only hovered track's wind
+            if (windState.enabled && playbackState.normalizeTimeEnabled && playbackState.trackData.length > 1) {
+                // Re-render current wind points with filtering
+                const cachedKey = windState.lastKey;
+                if (cachedKey && windState.cache.has(cachedKey)) {
+                    renderWindPoints(windState.cache.get(cachedKey));
+                }
+            }
+        }
+        
+        // If we're only hovering over a track (not a segment), just filter wind and return
+        if (trackFeature && !hoverFeature) {
+            return; // Wind filtering already handled above
+        }
+        
+        // Highlight the track segment if it's a leg (only if we have segment info)
+        if (hoverFeature && segmentType === 'leg' && recordingId !== undefined && segmentNumber !== undefined) {
             const newHoveredSegment = { recordingId, segmentNumber };
             // Only update if it's different to avoid unnecessary redraws
             if (!hoveredSegment || hoveredSegment.recordingId !== recordingId || hoveredSegment.segmentNumber !== segmentNumber) {
@@ -3384,7 +3857,7 @@ map.on('pointermove', function(event) {
             }
             
             // Get boat name
-            const boatName = track ? (track.vessel || track.name || '') : '';
+            const boatName = track ? getVesselDisplayName(track) : '';
             const boatNameText = boatName ? `${boatName} - ` : '';
             
             if (segmentType === 'tack') {
@@ -3402,8 +3875,10 @@ map.on('pointermove', function(event) {
             windTooltip.style.display = 'none';
             
             // Fetch TWS asynchronously for hover popup and update tooltip when available
-            if (segmentType === 'leg' && segmentData && eventToken) {
-                fetchLegWindSpeed(segmentData, eventToken).then(tws => {
+            // Use track's eventToken if available, otherwise fall back to global eventToken
+            const tooltipEventToken = track && track.eventToken ? track.eventToken : eventToken;
+            if (segmentType === 'leg' && segmentData && tooltipEventToken) {
+                fetchLegWindSpeed(segmentData, tooltipEventToken, track).then(tws => {
                     if (tws !== null && tws !== undefined && segmentTooltip.style.display === 'block') {
                         // Update tooltip with TWS - insert before VMG if VMG exists
                         const currentText = segmentTooltip.textContent;
@@ -3440,6 +3915,18 @@ map.on('pointermove', function(event) {
     if (hoveredSegment !== null) {
         hoveredSegment = null;
         trackSource.changed(); // Trigger style refresh
+    }
+    
+    // Clear hovered recording ID for wind filtering
+    if (hoveredRecordingId !== null) {
+        hoveredRecordingId = null;
+        // Refresh wind overlay to show all wind points again
+        if (windState.enabled && playbackState.normalizeTimeEnabled && playbackState.trackData.length > 1) {
+            const cachedKey = windState.lastKey;
+            if (cachedKey && windState.cache.has(cachedKey)) {
+                renderWindPoints(windState.cache.get(cachedKey));
+            }
+        }
     }
     
     segmentTooltip.style.display = 'none';
@@ -3588,6 +4075,12 @@ async function loadEventTracks(fitToExtent = false) {
             // Extract track points for playback
             const points = extractTrackPoints(trackData);
             
+            // Store original timestamps before normalization
+            const pointsWithOriginal = points.map(p => ({
+                ...p,
+                originalTimestamp: p.timestamp
+            }));
+            
             const format = new ol.format.GeoJSON();
             const feature = format.readFeature(trackData, {
                 featureProjection: 'EPSG:3857'
@@ -3602,21 +4095,38 @@ async function loadEventTracks(fitToExtent = false) {
             feature.set('index', index);
             
             // Store track data for playback
-            if (points.length > 0) {
+            if (pointsWithOriginal.length > 0) {
                 playbackState.trackData.push({
                     recordingId: recording.id,
                     feature: feature,
                     fullFeature: feature.clone(),
-                    points: points,
+                    points: pointsWithOriginal, // Will be normalized later if needed
+                    originalPoints: pointsWithOriginal, // Keep original for wind queries
                     color: color,
                     name: recording.name,
-                    vessel: recording.vessel
+                    vessel: recording.vessel,
+                    vesselId: recording.vesselId,
+                    startDate: recording.startDate,
+                    eventId: recording.eventId,
+                    eventToken: recording.eventToken,
+                    originalStartTimestamp: pointsWithOriginal[0].originalTimestamp
                 });
             }
             
-            trackInfo.push({
+            // Store track info with display name (will be updated with date if needed)
+            const trackForInfo = {
+                recordingId: recording.id,
                 name: recording.name,
                 vessel: recording.vessel,
+                vesselId: recording.vesselId,
+                startDate: recording.startDate,
+                color: color,
+                distance: recording.distance,
+                points: recording.points
+            };
+            trackInfo.push({
+                name: recording.name,
+                vessel: getVesselDisplayName(trackForInfo),
                 color: color,
                 distance: recording.distance,
                 points: recording.points
@@ -3631,22 +4141,80 @@ async function loadEventTracks(fitToExtent = false) {
     
     const features = (await Promise.all(promises)).filter(f => f !== null);
     trackSource.clear();
-    fullTrackSource.clear();
-    // Add full tracks to background layer (semi-transparent)
-    features.forEach(f => fullTrackSource.addFeature(f));
     
+    // Show / default normalization control for "virtual multi" or multi-day selections
+    const normalizeControl = document.getElementById('normalize-time-control');
+    const normalizeToggle = document.getElementById('normalize-time-toggle');
+    if (normalizeControl && normalizeToggle) {
+        const shouldShow = !eventToken && playbackState.trackData.length > 1;
+        normalizeControl.style.display = shouldShow ? 'block' : 'none';
+
+        const spansMultipleDays = tracksSpanMultipleDays(playbackState.trackData);
+        const defaultEnabled = (isVirtualMulti && playbackState.trackData.length > 1) || spansMultipleDays;
+        // Only set default on first load / when unset
+        if (!normalizeToggle.dataset.initialized) {
+            playbackState.normalizeTimeEnabled = defaultEnabled;
+            normalizeToggle.checked = defaultEnabled;
+            normalizeToggle.dataset.initialized = 'true';
+        } else {
+            playbackState.normalizeTimeEnabled = normalizeToggle.checked;
+        }
+    }
+
+    // Apply time normalization before segmenting/time-range calculations
+    if (playbackState.normalizeTimeEnabled) {
+        applyTimeNormalization(playbackState.trackData);
+        // Wind overlay can still work if tracks have associated events
+        const tracksWithEvents = playbackState.trackData.filter(t => t.eventToken);
+        const windToggle = document.getElementById('wind-toggle');
+        if (windToggle) {
+            if (tracksWithEvents.length === 0) {
+                // No events available, disable wind overlay
+                windToggle.checked = false;
+                windToggle.disabled = true;
+                windToggle.title = 'Wind overlay requires tracks with associated events when time normalization is enabled.';
+                windState.enabled = false;
+                windSource.clear();
+            } else {
+                // Events available, allow wind overlay (will use per-track event data)
+                windToggle.disabled = false;
+                windToggle.title = 'Wind overlay uses event data from each track\'s associated event.';
+            }
+        }
+    } else {
+        const windToggle = document.getElementById('wind-toggle');
+        if (windToggle) {
+            windToggle.disabled = false;
+            windToggle.title = '';
+        }
+    }
+
     // Compute segments for each track
     if (playbackState.trackData.length > 0) {
-        // Calculate wind direction (try to get it once for all tracks)
-        let windDirection = null;
-        if (playbackState.trackData.length > 0 && playbackState.trackData[0].points.length > 0) {
-            windDirection = await calculateWindDirection(playbackState.trackData[0].points, eventToken);
-        }
-        
-        // Compute segments for each track and store wind direction
+        // Calculate wind direction for each track individually (each track may have its own event)
         for (const track of playbackState.trackData) {
-            track.windDirection = windDirection; // Store wind direction for VMG calculation
-            track.segments = segmentTrack(track.points, windDirection);
+            // Use track's eventToken if available, otherwise fall back to global eventToken
+            const trackEventToken = track.eventToken || eventToken;
+            
+            // Use original points for wind calculation if normalization is enabled
+            let pointsForWind = track.points;
+            if (playbackState.normalizeTimeEnabled && track.originalPoints) {
+                pointsForWind = track.originalPoints;
+            }
+            
+            // Calculate wind direction for this specific track
+            let windDirection = null;
+            if (pointsForWind && pointsForWind.length > 0) {
+                windDirection = await calculateWindDirection(pointsForWind, trackEventToken);
+            }
+            
+            // Store wind direction for VMG calculation and segmenting
+            track.windDirection = windDirection;
+            
+            // Use normalized points for segmenting (if normalization is enabled)
+            // but use original wind direction calculated from original timestamps
+            const pointsForSegments = playbackState.normalizeTimeEnabled ? track.points : pointsForWind;
+            track.segments = segmentTrack(pointsForSegments, windDirection);
         }
         
         // Render legs table after segments are created
@@ -3681,35 +4249,7 @@ async function loadEventTracks(fitToExtent = false) {
         
         // Render all segments initially (when not in playback)
         if (!wasPlaying && !wasPaused) {
-            playbackState.trackData.forEach(track => {
-                if (track.segments && track.segments.length > 0) {
-                    track.segments.forEach(segment => {
-                        const segmentCoords = segment.points.map(p => [p.lon, p.lat]);
-                        const projectedCoords = segmentCoords.map(coord => ol.proj.fromLonLat(coord));
-                        const lineString = new ol.geom.LineString(projectedCoords);
-                        const segmentFeature = new ol.Feature({
-                            geometry: lineString
-                        });
-                        
-                        // Apply color banding
-                        const segmentColor = getSegmentColor(track.color, segment.segment_number);
-                        segmentFeature.set('color', segmentColor);
-                        segmentFeature.set('segmentType', segment.type);
-                        segmentFeature.set('averageAngle', segment.average_angle);
-                        segmentFeature.set('averageSpeed', segment.average_speed);
-                        segmentFeature.set('segmentNumber', segment.segment_number);
-                        segmentFeature.set('recordingId', track.recordingId);
-                        
-                        // Store pointOfSail for filtering (upwind/downwind)
-                        if (segment.type === 'leg' && track.windDirection !== null && segment.average_angle !== null) {
-                            const pointOfSail = getPointOfSail(segment.average_angle, track.windDirection);
-                            segmentFeature.set('pointOfSail', pointOfSail);
-                        }
-                        
-                        trackSource.addFeature(segmentFeature);
-                    });
-                }
-            });
+            renderFullSegments(playbackState.trackData);
         }
     }
     
@@ -3785,8 +4325,25 @@ async function loadEventTracks(fitToExtent = false) {
         }
     }
     
-    // Update legend display
-    if (trackInfo.length > 0) {
+    // Update legend display (use display names from trackData which may include dates)
+    if (playbackState.trackData.length > 0) {
+        let legendHtml = '';
+        playbackState.trackData.forEach((track, idx) => {
+            const displayName = getVesselDisplayName(track);
+            const distanceText = track.distance ? ` <span class="text-muted">(${formatDistance(track.distance, 1)})</span>` : '';
+            const isChecked = !hiddenRecordingIds.has(track.recordingId);
+            legendHtml += `
+                <div class="track-legend-item" data-recording-id="${track.recordingId}" style="cursor: pointer;">
+                    <input type="checkbox" class="track-visibility-checkbox" ${isChecked ? 'checked' : ''} style="margin-right: 6px; cursor: pointer;">
+                    <span class="track-color" style="background-color: ${track.color};"></span>
+                    <span>${displayName}${distanceText}</span>
+                </div>
+            `;
+        });
+        document.getElementById('track-legend').innerHTML = legendHtml;
+        setupLegendHover();
+    } else if (trackInfo.length > 0) {
+        // Fallback to trackInfo if trackData not available yet
         let legendHtml = '';
         trackInfo.forEach((info, idx) => {
             const distanceText = info.distance ? ` <span class="text-muted">(${formatDistance(info.distance, 1)})</span>` : '';
@@ -4041,15 +4598,39 @@ async function cropTrack(cropBefore) {
         return;
     }
     
-    const currentTime = playbackState.currentTime;
-    if (currentTime <= 0 && cropBefore) {
-        alert('Cannot crop before start time');
+    const currentTimestamp = playbackState.startTimestamp + playbackState.currentTime;
+    const selectedTracks = Array.from(selectedRecordingIds).map(recordingId => {
+        const track = playbackState.trackData.find(t => t.recordingId === recordingId);
+        return { recordingId, track };
+    }).filter(item => item.track);
+    
+    if (selectedTracks.length === 0) {
+        alert('Selected tracks are not loaded yet');
         return;
     }
     
-    const totalDuration = playbackState.endTimestamp - playbackState.startTimestamp;
-    if (currentTime >= totalDuration && !cropBefore) {
-        alert('Cannot crop after end time');
+    // Validate crop time against each track's own time bounds
+    const invalidTracks = [];
+    selectedTracks.forEach(({ track }) => {
+        const trackStart = track.points[0]?.timestamp;
+        const trackEnd = track.points[track.points.length - 1]?.timestamp;
+        if (trackStart === undefined || trackEnd === undefined) {
+            invalidTracks.push(track.name || track.vessel || 'Unknown track');
+            return;
+        }
+        const trackCurrentTime = currentTimestamp - trackStart;
+        const trackDuration = trackEnd - trackStart;
+        if (cropBefore && trackCurrentTime <= 0) {
+            invalidTracks.push(track.name || track.vessel || 'Unknown track');
+        }
+        if (!cropBefore && trackCurrentTime >= trackDuration) {
+            invalidTracks.push(track.name || track.vessel || 'Unknown track');
+        }
+    });
+    
+    if (invalidTracks.length > 0) {
+        const action = cropBefore ? 'before start time' : 'after end time';
+        alert(`Cannot crop ${action} for: ${invalidTracks.join(', ')}`);
         return;
     }
     
@@ -4077,8 +4658,10 @@ async function cropTrack(cropBefore) {
     document.getElementById('crop-after-btn').disabled = true;
     
     // Crop all selected tracks
-    const cropPromises = Array.from(selectedRecordingIds).map(async (recordingId) => {
+    const cropPromises = selectedTracks.map(async ({ recordingId, track }) => {
         try {
+            const trackStart = track.points[0]?.timestamp;
+            const trackCurrentTime = currentTimestamp - trackStart;
             const response = await fetch(`/api/recordings/${recordingId}/crop/`, {
                 method: 'POST',
                 headers: {
@@ -4088,7 +4671,7 @@ async function cropTrack(cropBefore) {
                 body: JSON.stringify({
                     crop_before: cropBefore,
                     crop_after: !cropBefore,
-                    current_time: currentTime,
+                    current_time: trackCurrentTime,
                     context: context,
                 }),
             });

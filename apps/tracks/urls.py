@@ -22,6 +22,7 @@ urlpatterns = [
     # Recordings
     path('recordings/', views.recording_list, name='recording_list'),
     path('recordings/upload/', views.upload_gpx, name='upload_gpx'),
+    path('recordings/map/', views.multi_recording_map, name='multi_recording_map'),
     path('recordings/<uuid:pk>/', views.recording_detail, name='recording_detail'),
     path('recordings/<uuid:pk>/map/', views.recording_map, name='recording_map'),
     path('recordings/<uuid:pk>/status/', views.recording_status, name='recording_status'),

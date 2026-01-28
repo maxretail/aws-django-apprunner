@@ -9,10 +9,21 @@
 </div>
 
 {% if recordings %}
+<div class="d-flex justify-content-between align-items-center mb-2">
+    <div class="text-muted small">
+        Select multiple ready tracks to view them together.
+    </div>
+    <button id="view-selected-btn" class="btn btn-outline-primary btn-sm" disabled>
+        View selected on map
+    </button>
+</div>
 <div class="table-responsive">
     <table class="table table-hover">
         <thead>
             <tr>
+                <th style="width: 36px;">
+                    <input type="checkbox" id="select-all-ready" title="Select all ready tracks">
+                </th>
                 <th>Event</th>
                 <th>Vessel</th>
                 <th>Date</th>
@@ -25,6 +36,13 @@
         <tbody>
             {% for recording in recordings %}
             <tr>
+                <td>
+                    {% if recording.status == 'ready' %}
+                    <input type="checkbox" class="recording-select" value="{{ recording.pk }}">
+                    {% else %}
+                    <input type="checkbox" disabled>
+                    {% endif %}
+                </td>
                 <td>
                     <a href="{% url 'tracks:recording_detail' pk=recording.pk %}">
                         {{ recording.event.name|default:recording.vessel.name|default:"Untitled" }}
@@ -57,6 +75,51 @@
         </tbody>
     </table>
 </div>
+<script>
+(function() {
+    const viewBtn = document.getElementById('view-selected-btn');
+    const selectAll = document.getElementById('select-all-ready');
+    const checkboxes = Array.from(document.querySelectorAll('.recording-select'));
+
+    function getSelectedIds() {
+        return checkboxes.filter(cb => cb.checked).map(cb => cb.value);
+    }
+
+    function updateViewButton() {
+        const selected = getSelectedIds();
+        viewBtn.disabled = selected.length === 0;
+        viewBtn.textContent = selected.length > 0
+            ? `View ${selected.length} selected on map`
+            : 'View selected on map';
+    }
+
+    if (selectAll) {
+        selectAll.addEventListener('change', function() {
+            checkboxes.forEach(cb => { cb.checked = selectAll.checked; });
+            updateViewButton();
+        });
+    }
+
+    checkboxes.forEach(cb => {
+        cb.addEventListener('change', function() {
+            if (selectAll) {
+                selectAll.checked = checkboxes.length > 0 && checkboxes.every(x => x.checked);
+                selectAll.indeterminate = checkboxes.some(x => x.checked) && !selectAll.checked;
+            }
+            updateViewButton();
+        });
+    });
+
+    viewBtn.addEventListener('click', function() {
+        const selected = getSelectedIds();
+        if (selected.length === 0) return;
+        const params = selected.map(id => `recording_id=${encodeURIComponent(id)}`).join('&');
+        window.location.href = `{% url 'tracks:multi_recording_map' %}?${params}`;
+    });
+
+    updateViewButton();
+})();
+</script>
 {% else %}
 <div class="text-center py-5">
     <p class="text-muted mb-3">You don't have any tracks yet.</p>
