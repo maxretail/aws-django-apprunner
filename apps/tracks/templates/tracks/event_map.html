@@ -1,0 +1,2239 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}{% if event %}{{ event.name }} - Event Map{% else %}{{ recordings.0.name|default:"Track Map" }}{% endif %} - SailArchive{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ol@v9.0.0/ol.css">
+<style>
+    #map {
+        width: 100%;
+        height: calc(100vh - 200px);
+        min-height: 600px;
+    }
+    @media (max-width: 768px) {
+        #map {
+            height: calc(100vh - 45px); /* Account for accordion header */
+        }
+    }
+    .map-controls {
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        z-index: 1000;
+        background: white;
+        padding: 12px;
+        border-radius: 4px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        max-width: 250px;
+        max-height: 80vh;
+        overflow-y: auto;
+        font-size: 0.9em;
+    }
+    .map-controls .mb-2 {
+        margin-bottom: 8px !important;
+    }
+    .map-controls .small {
+        font-size: 0.85em;
+    }
+    .page-header-container {
+        margin-bottom: 15px;
+    }
+    .page-header-accordion {
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        overflow: hidden;
+    }
+    .page-header-collapsed {
+        padding: 10px 15px;
+        background: #f8f9fa;
+        cursor: pointer;
+        user-select: none;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+    .page-header-title {
+        font-weight: 500;
+        font-size: 16px;
+        color: #333;
+    }
+    .page-header-toggle {
+        font-size: 12px;
+        color: #666;
+        transition: transform 0.2s;
+    }
+    .page-header-accordion.expanded .page-header-toggle {
+        transform: rotate(180deg);
+    }
+    .page-header-expanded {
+        padding: 15px;
+        background: white;
+    }
+    @media (min-width: 769px) {
+        .page-header-collapsed {
+            display: none !important;
+        }
+        .page-header-expanded {
+            display: block !important;
+        }
+    }
+    @media (max-width: 768px) {
+        .page-header-container {
+            margin-bottom: 0;
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            z-index: 1001;
+            background: white;
+            border-bottom: 1px solid #ddd;
+        }
+        .page-header-accordion {
+            border: none;
+            border-radius: 0;
+        }
+        .page-header-collapsed {
+            display: flex;
+            padding: 8px 12px;
+            background: white;
+        }
+        .page-header-title {
+            font-size: 14px;
+        }
+        .page-header-expanded {
+            display: none;
+            padding: 12px;
+        }
+        .page-header-accordion.expanded .page-header-expanded {
+            display: block;
+        }
+        .map-controls {
+            display: none; /* Hide legend on mobile, only show speedometers */
+        }
+    }
+    .track-legend {
+        margin-top: 8px;
+    }
+    .track-legend-item {
+        display: flex;
+        align-items: center;
+        margin-bottom: 4px;
+        font-size: 0.85em;
+        line-height: 1.3;
+    }
+    .track-color {
+        width: 16px;
+        height: 3px;
+        margin-right: 6px;
+        display: inline-block;
+        flex-shrink: 0;
+    }
+    @media (max-width: 768px) {
+        .track-legend {
+            margin-top: 5px;
+        }
+        .track-legend-item {
+            margin-bottom: 3px;
+            font-size: 0.8em;
+        }
+        .track-color {
+            width: 14px;
+            margin-right: 5px;
+        }
+    }
+    .playback-controls {
+        position: absolute;
+        bottom: 10px;
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 1000;
+        background: white;
+        padding: 15px 20px;
+        border-radius: 8px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+        display: flex;
+        align-items: center;
+        gap: 15px;
+        max-width: calc(100% - 20px);
+        width: auto;
+    }
+    @media (max-width: 768px) {
+        .playback-controls {
+            flex-direction: column;
+            width: calc(100% - 20px);
+            max-width: none;
+            padding: 12px 15px;
+            gap: 12px;
+            left: 10px;
+            right: 10px;
+            transform: none;
+        }
+    }
+    .playback-buttons {
+        display: flex;
+        gap: 8px;
+    }
+    .playback-buttons button {
+        width: 40px;
+        height: 40px;
+        border: none;
+        border-radius: 50%;
+        background: #0066cc;
+        color: white;
+        font-size: 16px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: background 0.2s;
+    }
+    @media (max-width: 768px) {
+        .playback-buttons {
+            width: 100%;
+            justify-content: center;
+        }
+        .playback-buttons button {
+            width: 48px;
+            height: 48px;
+            font-size: 18px;
+        }
+    }
+    .playback-buttons button:hover {
+        background: #0052a3;
+    }
+    .playback-buttons button:disabled {
+        background: #ccc;
+        cursor: not-allowed;
+    }
+    .playback-time {
+        font-family: monospace;
+        font-size: 16px;
+        font-weight: 500;
+        min-width: 200px;
+        text-align: center;
+    }
+    @media (max-width: 768px) {
+        .playback-time {
+            min-width: 0;
+            font-size: 14px;
+        }
+    }
+    .playback-slider-container {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        min-width: 400px;
+        flex: 1;
+    }
+    @media (max-width: 768px) {
+        .playback-slider-container {
+            min-width: 0;
+            width: 100%;
+        }
+    }
+    .playback-slider {
+        width: 100%;
+        height: 8px;
+        border-radius: 4px;
+        background: #e0e0e0;
+        outline: none;
+        -webkit-appearance: none;
+        appearance: none;
+    }
+    .playback-slider::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        appearance: none;
+        width: 18px;
+        height: 18px;
+        border-radius: 50%;
+        background: #0066cc;
+        cursor: pointer;
+        border: 2px solid white;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+    }
+    .playback-slider::-moz-range-thumb {
+        width: 18px;
+        height: 18px;
+        border-radius: 50%;
+        background: #0066cc;
+        cursor: pointer;
+        border: 2px solid white;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+    }
+    @media (max-width: 768px) {
+        .playback-slider {
+            height: 10px;
+        }
+        .playback-slider::-webkit-slider-thumb {
+            width: 24px;
+            height: 24px;
+        }
+        .playback-slider::-moz-range-thumb {
+            width: 24px;
+            height: 24px;
+        }
+    }
+    .playback-slider:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+    .playback-speed-control {
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+        min-width: 200px;
+    }
+    @media (max-width: 768px) {
+        .playback-speed-control {
+            min-width: 0;
+            width: 100%;
+        }
+    }
+    .playback-speed-label {
+        font-size: 12px;
+        color: #666;
+        text-align: center;
+    }
+    .playback-speed-buttons {
+        display: flex;
+        gap: 4px;
+        justify-content: center;
+    }
+    .playback-speed-buttons button {
+        flex: 1;
+        padding: 6px 12px;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        background: white;
+        color: #333;
+        font-size: 13px;
+        font-weight: 500;
+        cursor: pointer;
+        transition: all 0.2s;
+        min-height: 36px;
+    }
+    @media (max-width: 768px) {
+        .playback-speed-buttons button {
+            padding: 8px 12px;
+            font-size: 14px;
+            min-height: 44px;
+        }
+    }
+    .playback-speed-buttons button:hover {
+        background: #f0f0f0;
+        border-color: #0066cc;
+    }
+    .playback-speed-buttons button.active {
+        background: #0066cc;
+        color: white;
+        border-color: #0066cc;
+    }
+    .edit-mode-controls {
+        display: none;
+        flex-direction: column;
+        gap: 10px;
+        margin-top: 10px;
+        padding-top: 10px;
+        border-top: 2px solid #0066cc;
+    }
+    .playback-controls.edit-mode .edit-mode-controls {
+        display: flex;
+    }
+    .playback-controls.edit-mode {
+        border: 2px solid #0066cc;
+    }
+    .track-selection {
+        max-height: 200px;
+        overflow-y: auto;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        padding: 8px;
+        background: #f9f9f9;
+    }
+    .track-selection-item {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 0;
+        border-bottom: 1px solid #eee;
+    }
+    .track-selection-item:last-child {
+        border-bottom: none;
+    }
+    .track-selection-item input[type="checkbox"] {
+        width: 18px;
+        height: 18px;
+        cursor: pointer;
+    }
+    .track-selection-item label {
+        flex: 1;
+        cursor: pointer;
+        font-size: 13px;
+        margin: 0;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+    .track-selection-color {
+        width: 12px;
+        height: 2px;
+        display: inline-block;
+        flex-shrink: 0;
+    }
+    .track-selection-empty {
+        text-align: center;
+        color: #999;
+        font-size: 12px;
+        padding: 10px;
+    }
+    .crop-buttons {
+        display: flex;
+        gap: 8px;
+        width: 100%;
+    }
+    .crop-buttons button {
+        flex: 1;
+        padding: 10px 16px;
+        border: 1px solid #0066cc;
+        border-radius: 4px;
+        background: white;
+        color: #0066cc;
+        font-size: 14px;
+        font-weight: 500;
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+    .crop-buttons button:hover:not(:disabled) {
+        background: #0066cc;
+        color: white;
+    }
+    .crop-buttons button:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+        border-color: #ccc;
+        color: #999;
+    }
+    .remove-buttons {
+        width: 100%;
+    }
+    .remove-btn {
+        width: 100%;
+        padding: 10px 16px;
+        border: 1px solid #dc3545;
+        border-radius: 4px;
+        background: white;
+        color: #dc3545;
+        font-size: 14px;
+        font-weight: 500;
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+    .remove-btn:hover:not(:disabled) {
+        background: #dc3545;
+        color: white;
+    }
+    .remove-btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+        border-color: #ccc;
+        color: #999;
+    }
+    .edit-tracks-btn {
+        padding: 8px 16px;
+        border: 1px solid #666;
+        border-radius: 4px;
+        background: white;
+        color: #333;
+        font-size: 14px;
+        font-weight: 500;
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+    .edit-tracks-btn:hover {
+        background: #f0f0f0;
+    }
+    .edit-tracks-btn.active {
+        background: #0066cc;
+        color: white;
+        border-color: #0066cc;
+    }
+    .processing-indicator {
+        display: none;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 12px;
+        background: #fff3cd;
+        border: 1px solid #ffc107;
+        border-radius: 4px;
+        font-size: 13px;
+        color: #856404;
+    }
+    .processing-indicator.active {
+        display: flex;
+    }
+    .processing-indicator .spinner {
+        width: 16px;
+        height: 16px;
+        border: 2px solid #ffc107;
+        border-top-color: transparent;
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin {
+        to { transform: rotate(360deg); }
+    }
+    @media (max-width: 768px) {
+        .crop-buttons {
+            flex-direction: column;
+        }
+        .crop-buttons button {
+            width: 100%;
+        }
+    }
+    .speedometer-container {
+        position: absolute;
+        top: 10px;
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 1000;
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+        justify-content: center;
+        max-width: calc(100% - 20px);
+        pointer-events: none;
+    }
+    @media (max-width: 768px) {
+        .speedometer-container {
+            top: 45px; /* Below accordion header */
+            left: 5px;
+            right: 5px;
+            transform: none;
+            max-width: none;
+            justify-content: flex-start;
+            flex-wrap: nowrap;
+            overflow-x: auto;
+            overflow-y: hidden;
+            -webkit-overflow-scrolling: touch;
+            scrollbar-width: thin;
+            gap: 8px;
+        }
+        .speedometer-container::-webkit-scrollbar {
+            height: 4px;
+        }
+        .speedometer-container::-webkit-scrollbar-thumb {
+            background: #ccc;
+            border-radius: 2px;
+        }
+    }
+    .speedometer {
+        background: white;
+        border-radius: 8px;
+        padding: 8px 12px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        width: 140px;
+        pointer-events: auto;
+        flex-shrink: 0;
+    }
+    .speedometer-color {
+        width: 4px;
+        height: 24px;
+        border-radius: 2px;
+        flex-shrink: 0;
+    }
+    .speedometer-info {
+        flex: 1;
+        min-width: 0;
+    }
+    .speedometer-name {
+        font-size: 11px;
+        font-weight: 500;
+        color: #666;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    .speedometer-speed {
+        font-size: 18px;
+        font-weight: 600;
+        color: #333;
+        font-family: monospace;
+        line-height: 1.2;
+        display: flex;
+        align-items: baseline;
+    }
+    .speed-value {
+        display: inline-block;
+        min-width: 45px;
+        text-align: right;
+    }
+    .speedometer-unit {
+        font-size: 11px;
+        color: #999;
+        margin-left: 2px;
+    }
+    .speedometer-bearing {
+        font-size: 14px;
+        font-weight: 500;
+        color: #666;
+        font-family: monospace;
+        margin-top: 2px;
+        display: flex;
+        align-items: baseline;
+    }
+    .speedometer-bearing-label {
+        font-size: 10px;
+        color: #999;
+        margin-right: 4px;
+        flex-shrink: 0;
+    }
+    .bearing-value {
+        display: inline-block;
+        min-width: 60px;
+    }
+    @media (max-width: 768px) {
+        .speedometer-container {
+            top: 5px;
+            gap: 8px;
+            max-width: calc(100% - 10px);
+        }
+        .speedometer {
+            padding: 6px 10px;
+            width: 120px;
+        }
+        .speedometer-speed {
+            font-size: 16px;
+        }
+        .speed-value {
+            min-width: 40px;
+        }
+        .speedometer-name {
+            font-size: 10px;
+        }
+        .speedometer-bearing {
+            font-size: 12px;
+        }
+        .bearing-value {
+            min-width: 50px;
+        }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-header-container">
+    <div class="page-header-accordion" id="page-header-accordion">
+        <div class="page-header-collapsed">
+            {% if event %}
+            <span class="page-header-title">{{ event.name }}</span>
+            {% else %}
+            <span class="page-header-title">{{ recordings.0.name|default:"Track Map" }}</span>
+            {% endif %}
+            <span class="page-header-toggle">▼</span>
+        </div>
+        <div class="page-header-expanded">
+            <div class="d-flex justify-content-between align-items-center">
+                <div>
+                    {% if event %}
+                    <h4 class="mb-0">{{ event.name }}</h4>
+                    <small class="text-muted">{{ event.date|date:"F d, Y" }}</small>
+                    {% else %}
+                    <h4 class="mb-0">{{ recordings.0.name|default:"Track Map" }}</h4>
+                    {% endif %}
+                </div>
+                <div>
+                    {% if event %}
+                    <a href="{% url 'tracks:upload_to_event' token=event.share_token %}" class="btn btn-outline-secondary btn-sm me-2">
+                        Upload Track
+                    </a>
+                    <a href="{% url 'tracks:home' %}" class="btn btn-outline-secondary btn-sm">
+                        Home
+                    </a>
+                    {% else %}
+                    <a href="{% url 'tracks:recording_detail' pk=recordings.0.pk %}" class="btn btn-outline-secondary btn-sm">
+                        Back to Details
+                    </a>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="position-relative">
+    <div id="map"></div>
+    <div class="speedometer-container" id="speedometer-container">
+        <!-- Speedometers will be dynamically added here -->
+    </div>
+    <div class="map-controls">
+        <div class="mb-2">
+            <strong>{% if event %}Event Tracks{% else %}Track{% endif %}</strong>
+            <div class="text-muted small">{{ recordings|length }} track{{ recordings|length|pluralize }}</div>
+        </div>
+        <div class="track-legend" id="track-legend">
+            <small class="text-muted">Loading...</small>
+        </div>
+    </div>
+    <div class="playback-controls" id="playback-controls">
+        <div class="playback-buttons">
+            <button id="play-pause-btn" title="Play/Pause">▶</button>
+            <button id="stop-btn" title="Stop">⏹</button>
+        </div>
+        <div class="playback-slider-container">
+            <input type="range" id="time-slider" class="playback-slider" min="0" max="100" value="0" step="0.1">
+            <div class="playback-time" id="playback-time">
+                --:--:--
+            </div>
+        </div>
+        <div class="playback-speed-control">
+            <div class="playback-speed-label">Speed</div>
+            <div class="playback-speed-buttons">
+                <button class="speed-btn" data-speed="1">1x</button>
+                <button class="speed-btn" data-speed="10">10x</button>
+                <button class="speed-btn" data-speed="100">100x</button>
+                <button class="speed-btn active" data-speed="1000">1000x</button>
+            </div>
+        </div>
+        <div style="margin-top: 10px;">
+            <button id="edit-tracks-btn" class="edit-tracks-btn">Edit Tracks</button>
+        </div>
+        <div class="edit-mode-controls">
+            <div class="processing-indicator" id="processing-indicator">
+                <div class="spinner"></div>
+                <span id="processing-message">Processing crop...</span>
+            </div>
+            <div class="track-selection" id="track-selection">
+                <div class="track-selection-empty">Loading tracks...</div>
+            </div>
+            <div class="crop-buttons">
+                <button id="crop-before-btn" disabled>Crop Before</button>
+                <button id="crop-after-btn" disabled>Crop After</button>
+            </div>
+            {% if event %}
+            <div class="remove-buttons" style="margin-top: 10px;">
+                <button id="remove-from-event-btn" disabled class="remove-btn">Remove from Event</button>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/ol@v9.0.0/dist/ol.js"></script>
+<script>
+const eventToken = {% if event %}'{{ event.share_token }}'{% else %}null{% endif %};
+const recordings = [
+    {% for recording in recordings %}
+    {
+        id: '{{ recording.id }}',
+        name: '{{ recording.name|default:recording.vessel.name|default:"Track"|escapejs }}',
+        vessel: '{{ recording.vessel.name|default:"Unknown"|escapejs }}',
+        distance: {{ recording.distance_nm|default:"null" }},
+        points: {{ recording.point_count|default:0 }}
+    }{% if not forloop.last %},{% endif %}
+    {% endfor %}
+];
+
+// Initialize map
+const map = new ol.Map({
+    target: 'map',
+    layers: [
+        new ol.layer.Tile({
+            source: new ol.source.OSM()
+        })
+    ],
+    view: new ol.View({
+        center: ol.proj.fromLonLat([-118.5, 33.7]),
+        zoom: 10
+    })
+});
+
+// Background layer for full tracks (semi-transparent future portion)
+// This layer shows the complete track with reduced opacity
+const fullTrackSource = new ol.source.Vector();
+const fullTrackLayer = new ol.layer.Vector({
+    source: fullTrackSource,
+    style: function(feature) {
+        const color = feature.get('color') || '#0066cc';
+        // Convert hex color to rgba with reduced opacity
+        let r, g, b;
+        if (color.startsWith('#')) {
+            r = parseInt(color.slice(1, 3), 16);
+            g = parseInt(color.slice(3, 5), 16);
+            b = parseInt(color.slice(5, 7), 16);
+        } else {
+            // Default to blue if color format is unexpected
+            r = 0; g = 102; b = 204;
+        }
+        return new ol.style.Style({
+            stroke: new ol.style.Stroke({
+                color: `rgba(${r}, ${g}, ${b}, 0.3)`, // 30% opacity for future portion
+                width: 3
+            })
+        });
+    }
+});
+map.addLayer(fullTrackLayer);
+
+// Track layers - past portion (fully opaque, appears on top)
+const trackSource = new ol.source.Vector();
+const trackLayer = new ol.layer.Vector({
+    source: trackSource,
+    style: function(feature) {
+        const color = feature.get('color') || '#0066cc';
+        return new ol.style.Style({
+            stroke: new ol.style.Stroke({
+                color: color,
+                width: 3
+            })
+        });
+    }
+});
+map.addLayer(trackLayer);
+
+// Create trimaran boat icon function
+function createBoatIcon(color) {
+    // Create a canvas for the boat icon
+    const size = 32;
+    const canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext('2d');
+    
+    // Draw trimaran shape (pointing up/north, will be rotated)
+    // Reduced beam width by half
+    ctx.save();
+    ctx.translate(size / 2, size / 2);
+    
+    // Main hull (center, pointed shape) - increased thickness
+    ctx.beginPath();
+    ctx.moveTo(0, -size / 2 - 5.0); // Top point (bow) - extended further
+    ctx.lineTo(-4.5, size / 2 - 3.2); // Bottom left (stern) - thicker hull
+    ctx.lineTo(0, size / 2 - 4.8); // Bottom center - extended 20%
+    ctx.lineTo(4.5, size / 2 - 3.2); // Bottom right (stern) - thicker hull
+    ctx.closePath();
+    
+    // Fill main hull with track color
+    ctx.fillStyle = color;
+    ctx.fill();
+    
+    // No outline (solid color only)
+    
+    // Left outrigger (ama) - increased thickness, longer
+    ctx.beginPath();
+    ctx.moveTo(-size / 2 + 6, -size / 2 + 4);
+    ctx.lineTo(-size / 2 + 2, -size / 2 + 6);
+    ctx.lineTo(-size / 2 + 2, size / 2 - 6);
+    ctx.lineTo(-size / 2 + 6, size / 2 - 4);
+    ctx.closePath();
+    ctx.fillStyle = color;
+    ctx.fill();
+    // No outline (solid color only)
+    
+    // Right outrigger (ama) - increased thickness, longer
+    ctx.beginPath();
+    ctx.moveTo(size / 2 - 6, -size / 2 + 4);
+    ctx.lineTo(size / 2 - 2, -size / 2 + 6);
+    ctx.lineTo(size / 2 - 2, size / 2 - 6);
+    ctx.lineTo(size / 2 - 6, size / 2 - 4);
+    ctx.closePath();
+    ctx.fillStyle = color;
+    ctx.fill();
+    // No outline (solid color only)
+    
+    // Crossbeams (akas) connecting outriggers to main hull
+    // Perpendicular to hull (horizontal)
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1;
+    
+    // Upper beam
+    ctx.beginPath();
+    ctx.moveTo(-size / 2 + 4, -size / 2 + 6);
+    ctx.lineTo(size / 2 - 4, -size / 2 + 6);
+    ctx.stroke();
+    
+    // Lower beam
+    ctx.beginPath();
+    ctx.moveTo(-size / 2 + 4, size / 2 - 6);
+    ctx.lineTo(size / 2 - 4, size / 2 - 6);
+    ctx.stroke();
+    
+    // Mast
+    ctx.beginPath();
+    ctx.moveTo(0, -size / 2 + 2);
+    ctx.lineTo(0, size / 2 - 8);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    
+    ctx.restore();
+    
+    return canvas;
+}
+
+// Cache for boat icons by color
+const boatIconCache = {};
+
+function getBoatIcon(color) {
+    if (!boatIconCache[color]) {
+        boatIconCache[color] = createBoatIcon(color);
+    }
+    return boatIconCache[color];
+}
+
+// Marker layer for current positions during playback
+const markerSource = new ol.source.Vector();
+const markerLayer = new ol.layer.Vector({
+    source: markerSource,
+    style: function(feature) {
+        const color = feature.get('color') || '#ff0000';
+        const bearing = feature.get('bearing') || 0; // Bearing in degrees (0 = north, clockwise)
+        
+        // Get or create boat icon
+        const canvas = getBoatIcon(color);
+        
+        // Create icon style with rotation
+        // OpenLayers rotation is in radians, counter-clockwise from east (0 = east, positive = counter-clockwise)
+        // Bearing is in degrees, clockwise from north (0° = north, 90° = east)
+        // Icon is drawn pointing up (north)
+        // If boats are pointing at 9:00 (west/π) when bearing is 0° (north), current rotation is π
+        // We want rotation = π/2 for north, so we need to subtract π/2
+        // If current is (bearing - 180) giving π for 0°, we need: (bearing - 180 - 90) = (bearing - 270)
+        // Or equivalently: (bearing + 90) mod 360, but in radians: (bearing + 90) * π/180
+        // Actually, let's try: rotation = (bearing - 180) * π/180 - π/2 = (bearing - 270) * π/180
+        // Which simplifies to: (bearing + 90) * π/180 (since -270 = +90 mod 360)
+        // But that gives π for 90° bearing (should be 0)
+        // Let's try: rotation = (bearing - 90) * π/180, then if that's wrong, adjust
+        // Actually, if pointing at 9:00 (π) when should be 12:00 (π/2), difference is -π/2
+        // So: rotation = current - π/2. If current = (bearing - 180) * π/180, then:
+        // rotation = (bearing - 180) * π/180 - π/2 = (bearing - 180 - 90) * π/180 = (bearing - 270) * π/180
+        // Test: bearing 0° → (0 - 270) * π/180 = -3π/2 = π/2 ✓ (north)
+        // Test: bearing 90° → (90 - 270) * π/180 = -π = π ✓ (west) - wrong, should be 0 (east)
+        
+        // Let's try a different approach: if current gives π for 0°, and we want π/2, we subtract π/2
+        // But we need to know what formula gives π for 0°. Let's assume it's (bearing - 180)
+        // Then correct formula: (bearing - 180 - 90) = (bearing - 270) = (bearing + 90) mod 360
+        // But that doesn't work for 90° bearing.
+        
+        // Let's try: rotation = (bearing - 180) * π/180, then check if that's what's happening
+        // If that gives π for 0°, then to get π/2 we do: (bearing - 180 + 90) = (bearing - 90)
+        // Test: bearing 0° → (0 - 90) * π/180 = -π/2 = 3π/2 (south) - wrong
+        
+        // New approach: if pointing at 9:00 (π) when bearing is 0°, and we want 12:00 (π/2)
+        // We need to rotate 90° counter-clockwise, which means add π/2
+        // So: rotation = current + π/2
+        // If current = (bearing - 180) * π/180, then: rotation = (bearing - 180 + 90) * π/180 = (bearing - 90) * π/180
+        // Test: bearing 0° → (0 - 90) * π/180 = -π/2 = 3π/2 (south) - still wrong
+        
+        // Let me try the simplest: if it's 90° off, just add 90° to bearing before converting
+        // rotation = ((bearing + 90) - 90) * π/180 = bearing * π/180
+        // Test: bearing 0° → 0 (east) - wrong, should be π/2 (north)
+        
+        // Final attempt: if pointing at 9:00 (π) when should point at 12:00 (π/2) for bearing 0°
+        // The offset is: π/2 - π = -π/2
+        // So we add -π/2 to whatever gives π
+        // If (bearing - 180) gives π for 0°, then: (bearing - 180 - 90) = (bearing - 270)
+        // But (bearing - 270) = (bearing + 90) mod 360
+        // So: rotation = (bearing + 90) * π/180
+        // Test: bearing 0° → 90 * π/180 = π/2 ✓ (north)
+        // Test: bearing 90° → 180 * π/180 = π (west) ✗ should be 0 (east)
+        
+        // Create icon style with rotation
+        // directionAngle is atan2(dy, dx) in map coords (0 = east, π/2 = north).
+        // The icon is drawn pointing north, so rotate by -π/2 to align.
+        let rotation;
+        if (feature.get('directionAngle') !== undefined && feature.get('directionAngle') !== null) {
+            // Flip east/west by mirroring across the north-south axis
+            rotation = (Math.PI / 2) - feature.get('directionAngle');
+        } else {
+            // Fallback: bearing (0° = north, clockwise) to OL rotation (radians, CCW)
+            const bearing = feature.get('bearing') || 0;
+            rotation = (-bearing * Math.PI) / 180;
+        }
+        
+        return new ol.style.Style({
+            image: new ol.style.Icon({
+                img: canvas,
+                imgSize: [canvas.width, canvas.height],
+                rotation: rotation,
+                anchor: [0.5, 0.5], // Center of icon
+                scale: 1
+            })
+        });
+    }
+});
+map.addLayer(markerLayer);
+
+// Color palette for different tracks
+const colors = ['#0066cc', '#cc0000', '#00cc00', '#cc00cc', '#00cccc', '#cc6600', '#ff6600', '#6600cc', '#0066cc', '#cc0066'];
+
+// Playback state
+const playbackState = {
+    isPlaying: false,
+    isPaused: false,
+    currentTime: 0, // seconds from start
+    startTimestamp: null, // earliest timestamp across all tracks
+    endTimestamp: null, // latest timestamp across all tracks
+    playbackSpeed: 1000.0, // multiplier for playback speed (default 1000x)
+    animationFrame: null,
+    startPlayTime: null,
+    trackData: [], // array of {feature, points, color, name, vessel, fullFeature}
+    timezone: null,
+    isUpdatingSlider: false // flag to prevent feedback loops
+};
+
+// Convert bearing in degrees to compass direction
+function bearingToCompass(bearing) {
+    const directions = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 
+                        'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW'];
+    const index = Math.round(bearing / 22.5) % 16;
+    return directions[index];
+}
+
+// Speedometer management
+const speedometers = {}; // Map of recordingId -> speedometer element
+const rotationState = {}; // Map of recordingId -> last rotation angle (radians)
+
+function updateSpeedometer(recordingId, vesselName, color, speed, bearing) {
+    const container = document.getElementById('speedometer-container');
+    
+    // Get or create speedometer element
+    let speedometer = speedometers[recordingId];
+    if (!speedometer) {
+        speedometer = document.createElement('div');
+        speedometer.className = 'speedometer';
+        speedometer.id = `speedometer-${recordingId}`;
+        speedometer.innerHTML = `
+            <div class="speedometer-color" style="background-color: ${color};"></div>
+            <div class="speedometer-info">
+                <div class="speedometer-name">${vesselName}</div>
+                <div class="speedometer-speed">
+                    <span class="speed-value">--</span><span class="speedometer-unit">kn</span>
+                </div>
+                <div class="speedometer-bearing">
+                    <span class="speedometer-bearing-label">HDG:</span>
+                    <span class="bearing-value">--</span>
+                </div>
+            </div>
+        `;
+        container.appendChild(speedometer);
+        speedometers[recordingId] = speedometer;
+    }
+    
+    // Update speed value
+    const speedValue = speedometer.querySelector('.speed-value');
+    if (speed !== null && speed !== undefined) {
+        speedValue.textContent = speed.toFixed(1);
+    } else {
+        speedValue.textContent = '--';
+    }
+    
+    // Update bearing value
+    const bearingValue = speedometer.querySelector('.bearing-value');
+    if (bearing !== null && bearing !== undefined) {
+        const bearingDeg = Math.round(bearing);
+        const compass = bearingToCompass(bearing);
+        bearingValue.textContent = `${bearingDeg}° ${compass}`;
+    } else {
+        bearingValue.textContent = '--';
+    }
+}
+
+function clearSpeedometers() {
+    const container = document.getElementById('speedometer-container');
+    container.innerHTML = '';
+    Object.keys(speedometers).forEach(key => delete speedometers[key]);
+}
+
+// Helper function: atan2 in degrees
+function atan2d(y, x) {
+    return Math.atan2(y, x) * 180 / Math.PI;
+}
+
+// Normalize angle to [-pi, pi]
+function normalizeAngle(angle) {
+    const twoPi = Math.PI * 2;
+    let normalized = angle % twoPi;
+    if (normalized > Math.PI) normalized -= twoPi;
+    if (normalized < -Math.PI) normalized += twoPi;
+    return normalized;
+}
+
+// Smoothly interpolate between angles (shortest path)
+function smoothAngle(prevAngle, targetAngle, alpha) {
+    if (prevAngle === null || prevAngle === undefined) {
+        return targetAngle;
+    }
+    const delta = normalizeAngle(targetAngle - prevAngle);
+    return prevAngle + delta * alpha;
+}
+
+// Calculate bearing (direction) between two points in degrees
+// Returns bearing in degrees (0 = north, 90 = east, clockwise)
+function calculateBearing(lat1, lon1, lat2, lon2) {
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const lat1Rad = lat1 * Math.PI / 180;
+    const lat2Rad = lat2 * Math.PI / 180;
+    
+    const y = Math.sin(dLon) * Math.cos(lat2Rad);
+    const x = Math.cos(lat1Rad) * Math.sin(lat2Rad) - 
+              Math.sin(lat1Rad) * Math.cos(lat2Rad) * Math.cos(dLon);
+    
+    let bearing = atan2d(y, x);
+    bearing = (bearing + 360) % 360; // Normalize to 0-360
+    
+    return bearing;
+}
+
+// Get timezone from coordinates using a simple approximation
+function getTimezoneFromCoordinates(lon, lat) {
+    const timezoneOffset = Math.round(lon / 15);
+    const timezoneMap = {
+        '-12': 'Etc/GMT+12', '-11': 'Pacific/Midway', '-10': 'Pacific/Honolulu',
+        '-9': 'America/Anchorage', '-8': 'America/Los_Angeles', '-7': 'America/Denver',
+        '-6': 'America/Chicago', '-5': 'America/New_York', '-4': 'America/Halifax',
+        '-3': 'America/Sao_Paulo', '-2': 'Atlantic/South_Georgia', '-1': 'Atlantic/Azores',
+        '0': 'UTC', '1': 'Europe/Paris', '2': 'Europe/Athens', '3': 'Europe/Moscow',
+        '4': 'Asia/Dubai', '5': 'Asia/Karachi', '6': 'Asia/Dhaka', '7': 'Asia/Bangkok',
+        '8': 'Asia/Shanghai', '9': 'Asia/Tokyo', '10': 'Australia/Sydney',
+        '11': 'Pacific/Guadalcanal', '12': 'Pacific/Auckland'
+    };
+    return timezoneMap[timezoneOffset.toString()] || 'UTC';
+}
+
+// Extract track points with timestamps from GeoJSON
+function extractTrackPoints(trackData) {
+    const coordinates = trackData.geometry.coordinates;
+    const points = [];
+    for (const coord of coordinates) {
+        if (coord.length >= 3 && coord[2] != null) {
+            points.push({
+                lon: coord[0],
+                lat: coord[1],
+                timestamp: coord[2],
+                speed: coord[3] || null  // Speed in knots (or null if not available)
+            });
+        }
+    }
+    return points;
+}
+
+// Format time in local timezone
+function formatPlaybackTime(timestamp) {
+    if (!timestamp || !playbackState.timezone) {
+        return '--:--:--';
+    }
+    try {
+        const date = new Date(timestamp * 1000);
+        const formatter = new Intl.DateTimeFormat('en-US', {
+            timeZone: playbackState.timezone,
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: false
+        });
+        return formatter.format(date);
+    } catch (e) {
+        const date = new Date(timestamp * 1000);
+        return date.toISOString().substr(11, 8);
+    }
+}
+
+// Update playback time display
+function updatePlaybackTimeDisplay() {
+    if (!playbackState.startTimestamp) {
+        document.getElementById('playback-time').textContent = '--:--:--';
+        return;
+    }
+    const currentTimestamp = playbackState.startTimestamp + playbackState.currentTime;
+    const formattedTime = formatPlaybackTime(currentTimestamp);
+    document.getElementById('playback-time').textContent = formattedTime;
+}
+
+// Update slider position
+function updateSliderPosition() {
+    const slider = document.getElementById('time-slider');
+    if (!playbackState.startTimestamp || !playbackState.endTimestamp) {
+        slider.value = 0;
+        return;
+    }
+    
+    const totalDuration = playbackState.endTimestamp - playbackState.startTimestamp;
+    if (totalDuration > 0) {
+        const percentage = (playbackState.currentTime / totalDuration) * 100;
+        playbackState.isUpdatingSlider = true;
+        slider.value = Math.min(100, Math.max(0, percentage));
+        // Use setTimeout to reset flag after browser processes the change
+        setTimeout(() => {
+            playbackState.isUpdatingSlider = false;
+        }, 0);
+    } else {
+        slider.value = 0;
+    }
+}
+
+// Seek to a specific time based on slider position
+function seekToTime(percentage) {
+    if (!playbackState.startTimestamp || !playbackState.endTimestamp) {
+        return;
+    }
+    
+    const totalDuration = playbackState.endTimestamp - playbackState.startTimestamp;
+    playbackState.currentTime = (percentage / 100) * totalDuration;
+    
+    // If playing, adjust startPlayTime to maintain smooth playback
+    if (playbackState.isPlaying) {
+        playbackState.startPlayTime = Date.now() - (playbackState.currentTime * 1000 / playbackState.playbackSpeed);
+    }
+    
+    updatePlaybackTimeDisplay();
+    // Don't call updateSliderPosition here - it's called separately during playback
+    // or the slider value is already correct when user is dragging
+    updatePlaybackDisplay();
+}
+
+// Helper function to convert hex color to rgba
+function hexToRgba(hex, alpha) {
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+// Update markers and track display during playback
+function updatePlaybackDisplay() {
+    if (playbackState.trackData.length === 0) {
+        return;
+    }
+    
+    const currentTimestamp = playbackState.startTimestamp + playbackState.currentTime;
+    
+    // Clear past tracks and markers (keep full tracks in background)
+    trackSource.clear();
+    markerSource.clear();
+    
+    // Clear speedometers - they will be recreated as we process tracks
+    clearSpeedometers();
+    
+    // Ensure full tracks are visible in background (semi-transparent)
+    if (fullTrackSource.getFeatures().length === 0) {
+        playbackState.trackData.forEach(track => {
+            const fullFeature = track.fullFeature.clone();
+            fullTrackSource.addFeature(fullFeature);
+        });
+    }
+    
+    playbackState.trackData.forEach(track => {
+        // Find points up to current time and interpolate position
+        const pastCoords = [];
+        let interpolatedPoint = null;
+        
+        // Find the two points that bracket the current timestamp
+        let prevPoint = null;
+        let nextPoint = null;
+        
+        for (let i = 0; i < track.points.length; i++) {
+            const point = track.points[i];
+            
+            if (point.timestamp <= currentTimestamp) {
+                pastCoords.push([point.lon, point.lat]);
+                prevPoint = point;
+            } else {
+                nextPoint = point;
+                break;
+            }
+        }
+        
+        // Calculate direction vector and speed
+        let directionAngle = null; // Angle in radians for OpenLayers rotation
+        let speed = null;
+        
+        // Interpolate position between prevPoint and nextPoint
+        if (prevPoint && nextPoint) {
+            // Linear interpolation based on time
+            const timeDiff = nextPoint.timestamp - prevPoint.timestamp;
+            const timeFromPrev = currentTimestamp - prevPoint.timestamp;
+            const ratio = timeDiff > 0 ? timeFromPrev / timeDiff : 0;
+            
+            // Clamp ratio to [0, 1]
+            const clampedRatio = Math.max(0, Math.min(1, ratio));
+            
+            // Interpolate longitude and latitude
+            const lon = prevPoint.lon + (nextPoint.lon - prevPoint.lon) * clampedRatio;
+            const lat = prevPoint.lat + (nextPoint.lat - prevPoint.lat) * clampedRatio;
+            
+            // Calculate direction vector directly from prevPoint to nextPoint
+            // Convert to map coordinates (Web Mercator)
+            const prevCoord = ol.proj.fromLonLat([prevPoint.lon, prevPoint.lat]);
+            const nextCoord = ol.proj.fromLonLat([nextPoint.lon, nextPoint.lat]);
+            
+            // Calculate vector (delta x, delta y) in map coordinates
+            const dx = nextCoord[0] - prevCoord[0];
+            const dy = nextCoord[1] - prevCoord[1];
+            
+            // Calculate angle using atan2 (returns angle in radians)
+            // OpenLayers rotation: 0 = east, π/2 = north, π = west, -π/2 = south (counter-clockwise from east)
+            // atan2(dy, dx) gives: 0 when pointing right (east), π/2 when pointing up (north)
+            directionAngle = Math.atan2(dy, dx);
+            
+            // Calculate bearing for display (0° = north, clockwise)
+            const bearing = calculateBearing(prevPoint.lat, prevPoint.lon, nextPoint.lat, nextPoint.lon);
+            
+            // Interpolate speed
+            if (prevPoint.speed !== null && nextPoint.speed !== null) {
+                speed = prevPoint.speed + (nextPoint.speed - prevPoint.speed) * clampedRatio;
+            } else if (nextPoint.speed !== null) {
+                speed = nextPoint.speed;
+            } else if (prevPoint.speed !== null) {
+                speed = prevPoint.speed;
+            }
+            
+            interpolatedPoint = { lon, lat, bearing, speed, directionAngle };
+        } else if (prevPoint) {
+            // We're at or past the last point, use the last point
+            // Try to get direction from second-to-last to last point
+            let bearing = 0;
+            if (track.points.length >= 2) {
+                const secondLast = track.points[track.points.length - 2];
+                const prevCoord = ol.proj.fromLonLat([secondLast.lon, secondLast.lat]);
+                const nextCoord = ol.proj.fromLonLat([prevPoint.lon, prevPoint.lat]);
+                const dx = nextCoord[0] - prevCoord[0];
+                const dy = nextCoord[1] - prevCoord[1];
+                directionAngle = Math.atan2(dy, dx);
+                bearing = calculateBearing(secondLast.lat, secondLast.lon, prevPoint.lat, prevPoint.lon);
+            }
+            speed = prevPoint.speed;
+            interpolatedPoint = { lon: prevPoint.lon, lat: prevPoint.lat, bearing, speed, directionAngle };
+        } else if (nextPoint && track.points.length > 0) {
+            // We're before the first point, use the first point
+            const firstPoint = track.points[0];
+            let bearing = 0;
+            // Try to get direction from first to second point
+            if (track.points.length >= 2) {
+                const secondPoint = track.points[1];
+                const prevCoord = ol.proj.fromLonLat([firstPoint.lon, firstPoint.lat]);
+                const nextCoord = ol.proj.fromLonLat([secondPoint.lon, secondPoint.lat]);
+                const dx = nextCoord[0] - prevCoord[0];
+                const dy = nextCoord[1] - prevCoord[1];
+                directionAngle = Math.atan2(dy, dx);
+                bearing = calculateBearing(firstPoint.lat, firstPoint.lon, secondPoint.lat, secondPoint.lon);
+            }
+            speed = firstPoint.speed;
+            interpolatedPoint = { lon: firstPoint.lon, lat: firstPoint.lat, bearing, speed, directionAngle };
+        }
+        
+        // Add past portion (fully opaque) on top of semi-transparent full track
+        if (pastCoords.length > 1) {
+            const projectedCoords = pastCoords.map(coord => ol.proj.fromLonLat(coord));
+            const lineString = new ol.geom.LineString(projectedCoords);
+            const trackFeature = new ol.Feature({
+                geometry: lineString
+            });
+            trackFeature.set('color', track.color);
+            trackSource.addFeature(trackFeature);
+        }
+        
+        // Add marker at interpolated current position
+        if (interpolatedPoint) {
+            const marker = new ol.Feature({
+                geometry: new ol.geom.Point(
+                    ol.proj.fromLonLat([interpolatedPoint.lon, interpolatedPoint.lat])
+                )
+            });
+            marker.set('color', track.color);
+            marker.set('bearing', interpolatedPoint.bearing || 0);
+            marker.set('speed', interpolatedPoint.speed);
+            // Smooth rotation to reduce jitter
+            let smoothedAngle = interpolatedPoint.directionAngle;
+            if (smoothedAngle !== null && smoothedAngle !== undefined) {
+                const prevAngle = rotationState[track.recordingId];
+                smoothedAngle = smoothAngle(prevAngle, smoothedAngle, 0.25);
+                rotationState[track.recordingId] = smoothedAngle;
+            }
+            marker.set('directionAngle', smoothedAngle); // Direct angle from vector (smoothed)
+            marker.set('recordingId', track.recordingId);
+            marker.set('vessel', track.vessel || track.name);
+            markerSource.addFeature(marker);
+        }
+        
+        // Update speedometer for this track
+        updateSpeedometer(
+            track.recordingId, 
+            track.vessel || track.name, 
+            track.color, 
+            interpolatedPoint ? interpolatedPoint.speed : null,
+            interpolatedPoint ? interpolatedPoint.bearing : null
+        );
+    });
+}
+
+// Playback animation loop
+function playbackAnimation() {
+    if (!playbackState.isPlaying) {
+        return;
+    }
+    
+    const now = Date.now();
+    const elapsed = (now - playbackState.startPlayTime) / 1000;
+    playbackState.currentTime = elapsed * playbackState.playbackSpeed;
+    
+    const totalDuration = playbackState.endTimestamp - playbackState.startTimestamp;
+    if (playbackState.currentTime >= totalDuration) {
+        playbackState.currentTime = totalDuration;
+        stopPlayback();
+        return;
+    }
+    
+    updatePlaybackTimeDisplay();
+    updateSliderPosition();
+    updatePlaybackDisplay();
+    
+    playbackState.animationFrame = requestAnimationFrame(playbackAnimation);
+}
+
+// Start playback
+function startPlayback() {
+    if (playbackState.trackData.length === 0) {
+        return;
+    }
+    
+    playbackState.isPlaying = true;
+    playbackState.isPaused = false;
+    playbackState.startPlayTime = Date.now() - (playbackState.currentTime * 1000 / playbackState.playbackSpeed);
+    
+    document.getElementById('play-pause-btn').textContent = '⏸';
+    document.getElementById('play-pause-btn').title = 'Pause';
+    document.getElementById('stop-btn').disabled = false;
+    
+    playbackAnimation();
+}
+
+// Pause playback
+function pausePlayback() {
+    playbackState.isPlaying = false;
+    playbackState.isPaused = true;
+    
+    if (playbackState.animationFrame) {
+        cancelAnimationFrame(playbackState.animationFrame);
+        playbackState.animationFrame = null;
+    }
+    
+    document.getElementById('play-pause-btn').textContent = '▶';
+    document.getElementById('play-pause-btn').title = 'Play';
+}
+
+// Stop playback
+function stopPlayback() {
+    playbackState.isPlaying = false;
+    playbackState.isPaused = false;
+    playbackState.currentTime = 0;
+    
+    if (playbackState.animationFrame) {
+        cancelAnimationFrame(playbackState.animationFrame);
+        playbackState.animationFrame = null;
+    }
+    
+    document.getElementById('play-pause-btn').textContent = '▶';
+    document.getElementById('play-pause-btn').title = 'Play';
+    document.getElementById('stop-btn').disabled = true;
+    
+    updatePlaybackTimeDisplay();
+    updateSliderPosition();
+    markerSource.clear();
+    
+    // Clear speedometers when stopped
+    clearSpeedometers();
+    // Clear rotation smoothing state
+    Object.keys(rotationState).forEach(key => delete rotationState[key]);
+    
+    // Restore full tracks (clear background layer, show normal tracks)
+    fullTrackSource.clear();
+    trackSource.clear();
+    playbackState.trackData.forEach(track => {
+        trackSource.addFeature(track.fullFeature);
+    });
+}
+
+// Setup playback controls
+document.getElementById('play-pause-btn').addEventListener('click', function() {
+    if (playbackState.isPlaying) {
+        // User manually paused - clear auto-pause flag
+        wasAutoPaused = false;
+        pausePlayback();
+    } else {
+        // User manually started - clear auto-pause flag
+        wasAutoPaused = false;
+        startPlayback();
+    }
+});
+
+document.getElementById('stop-btn').addEventListener('click', function() {
+    stopPlayback();
+});
+
+// Setup time slider
+const timeSlider = document.getElementById('time-slider');
+let isDragging = false;
+
+timeSlider.addEventListener('input', function() {
+    // Only seek if this is a user interaction, not a programmatic update
+    if (!playbackState.isUpdatingSlider) {
+        // Update display while dragging
+        seekToTime(parseFloat(this.value));
+    }
+});
+
+timeSlider.addEventListener('mousedown', function() {
+    isDragging = true;
+    // Pause playback when user starts dragging
+    if (playbackState.isPlaying) {
+        pausePlayback();
+    }
+});
+
+timeSlider.addEventListener('mouseup', function() {
+    isDragging = false;
+    // Seek to final position (already updated in input event, but ensure it's correct)
+    seekToTime(parseFloat(this.value));
+});
+
+timeSlider.addEventListener('touchstart', function() {
+    isDragging = true;
+    if (playbackState.isPlaying) {
+        pausePlayback();
+    }
+});
+
+timeSlider.addEventListener('touchend', function() {
+    isDragging = false;
+    seekToTime(parseFloat(this.value));
+});
+
+document.getElementById('play-pause-btn').disabled = true;
+document.getElementById('stop-btn').disabled = true;
+timeSlider.disabled = true;
+
+// Setup speed control buttons
+function updateSpeedButtons(activeSpeed) {
+    document.querySelectorAll('.speed-btn').forEach(btn => {
+        const btnSpeed = parseFloat(btn.getAttribute('data-speed'));
+        if (btnSpeed === activeSpeed) {
+            btn.classList.add('active');
+        } else {
+            btn.classList.remove('active');
+        }
+    });
+}
+
+function setPlaybackSpeed(speed) {
+    playbackState.playbackSpeed = speed;
+    updateSpeedButtons(speed);
+    
+    // If playing, adjust startPlayTime to maintain current position
+    if (playbackState.isPlaying) {
+        playbackState.startPlayTime = Date.now() - (playbackState.currentTime * 1000 / playbackState.playbackSpeed);
+    }
+}
+
+// Add click handlers to speed buttons
+document.querySelectorAll('.speed-btn').forEach(btn => {
+    btn.addEventListener('click', function() {
+        const speed = parseFloat(this.getAttribute('data-speed'));
+        setPlaybackSpeed(speed);
+    });
+});
+
+// Initialize with default speed (1000x)
+updateSpeedButtons(1000);
+
+// Get appropriate zoom level for API
+function getZoomLevelForAPI() {
+    const zoom = map.getView().getZoom();
+    if (!zoom) return 14;  // Default
+    return Math.round(zoom);
+}
+
+// Load all tracks
+async function loadEventTracks(fitToExtent = false) {
+    const trackInfo = [];
+    playbackState.trackData = [];
+    
+    // Save current view state before clearing
+    const currentCenter = map.getView().getCenter();
+    const currentZoom = map.getView().getZoom();
+    
+    // Save playback state before reloading
+    const wasPlaying = playbackState.isPlaying;
+    const wasPaused = playbackState.isPaused;
+    const savedCurrentTime = playbackState.currentTime;
+    
+    // Get current zoom level for track loading
+    const zoom = getZoomLevelForAPI();
+    
+    // Pause playback temporarily (don't reset state)
+    if (playbackState.isPlaying) {
+        if (playbackState.animationFrame) {
+            cancelAnimationFrame(playbackState.animationFrame);
+            playbackState.animationFrame = null;
+        }
+        playbackState.isPlaying = false;
+    }
+    
+    const promises = recordings.map(async (recording, index) => {
+        try {
+            const response = await fetch(`/api/recordings/${recording.id}/track/?zoom=${zoom}`);
+            if (!response.ok) {
+                console.error(`Failed to fetch track ${recording.id}: ${response.status}`);
+                return null;
+            }
+            
+            const data = await response.json();
+            if (!data.url) {
+                console.error(`No URL for track ${recording.id}`);
+                return null;
+            }
+            
+            const trackResponse = await fetch(data.url);
+            if (!trackResponse.ok) {
+                console.error(`Failed to fetch track data for ${recording.id}: ${trackResponse.status}`);
+                return null;
+            }
+            
+            const trackData = await trackResponse.json();
+            
+            // Extract track points for playback
+            const points = extractTrackPoints(trackData);
+            
+            const format = new ol.format.GeoJSON();
+            const feature = format.readFeature(trackData, {
+                featureProjection: 'EPSG:3857'
+            });
+            
+            const color = colors[index % colors.length];
+            feature.set('color', color);
+            feature.set('name', recording.name);
+            feature.set('vessel', recording.vessel);
+            feature.set('distance', recording.distance);
+            feature.set('points', recording.points);
+            feature.set('index', index);
+            
+            // Store track data for playback
+            if (points.length > 0) {
+                playbackState.trackData.push({
+                    recordingId: recording.id,
+                    feature: feature,
+                    fullFeature: feature.clone(),
+                    points: points,
+                    color: color,
+                    name: recording.name,
+                    vessel: recording.vessel
+                });
+            }
+            
+            trackInfo.push({
+                name: recording.name,
+                vessel: recording.vessel,
+                color: color,
+                distance: recording.distance,
+                points: recording.points
+            });
+            
+            return feature;
+        } catch (error) {
+            console.error(`Failed to load track ${recording.id}:`, error);
+            return null;
+        }
+    });
+    
+    const features = (await Promise.all(promises)).filter(f => f !== null);
+    trackSource.clear();
+    fullTrackSource.clear();
+    features.forEach(f => trackSource.addFeature(f));
+    
+    // Determine overall time range and timezone
+    if (playbackState.trackData.length > 0) {
+        let earliestStart = null;
+        let latestEnd = null;
+        let firstPoint = null;
+        
+        playbackState.trackData.forEach(track => {
+            if (track.points.length > 0) {
+                const trackStart = track.points[0].timestamp;
+                const trackEnd = track.points[track.points.length - 1].timestamp;
+                
+                if (earliestStart === null || trackStart < earliestStart) {
+                    earliestStart = trackStart;
+                    firstPoint = track.points[0];
+                }
+                if (latestEnd === null || trackEnd > latestEnd) {
+                    latestEnd = trackEnd;
+                }
+            }
+        });
+        
+        playbackState.startTimestamp = earliestStart;
+        playbackState.endTimestamp = latestEnd;
+        
+        if (firstPoint) {
+            playbackState.timezone = getTimezoneFromCoordinates(firstPoint.lon, firstPoint.lat);
+        }
+        
+        // Restore playback time (don't reset if we were playing/paused)
+        if (!fitToExtent && (wasPlaying || wasPaused)) {
+            playbackState.currentTime = savedCurrentTime;
+        } else {
+            playbackState.currentTime = 0;
+        }
+        
+        updatePlaybackTimeDisplay();
+        updateSliderPosition();
+        
+        // Enable playback controls if we have valid tracks
+        if (playbackState.startTimestamp && playbackState.endTimestamp) {
+            document.getElementById('play-pause-btn').disabled = false;
+            document.getElementById('time-slider').disabled = false;
+        }
+        
+        // Restore playback state if it was playing
+        if (wasPlaying && playbackState.startTimestamp && playbackState.endTimestamp) {
+            // Clamp currentTime to valid range
+            const totalDuration = playbackState.endTimestamp - playbackState.startTimestamp;
+            if (playbackState.currentTime > totalDuration) {
+                playbackState.currentTime = totalDuration;
+            }
+            
+            // Update display to show current position
+            updatePlaybackDisplay();
+            
+            // Resume playback
+            playbackState.isPlaying = true;
+            playbackState.isPaused = false;
+            playbackState.startPlayTime = Date.now() - (playbackState.currentTime * 1000 / playbackState.playbackSpeed);
+            document.getElementById('play-pause-btn').textContent = '⏸';
+            document.getElementById('play-pause-btn').title = 'Pause';
+            document.getElementById('stop-btn').disabled = false;
+            playbackAnimation();
+        } else if (wasPaused) {
+            // Just update display to show paused position
+            updatePlaybackDisplay();
+        }
+    }
+    
+    // Update legend display
+    if (trackInfo.length > 0) {
+        let legendHtml = '';
+        trackInfo.forEach((info, idx) => {
+            const distanceText = info.distance ? ` <span class="text-muted">(${info.distance.toFixed(1)} nm)</span>` : '';
+            legendHtml += `
+                <div class="track-legend-item">
+                    <span class="track-color" style="background-color: ${info.color};"></span>
+                    <span>${info.vessel}${distanceText}</span>
+                </div>
+            `;
+        });
+        document.getElementById('track-legend').innerHTML = legendHtml;
+    } else {
+        document.getElementById('track-legend').innerHTML = '<small class="text-muted">No tracks loaded</small>';
+    }
+    
+    // Update track selection if in edit mode
+    if (editMode) {
+        updateTrackSelection();
+    }
+    
+    // Fit to all tracks only if requested (initial load), otherwise restore view
+    if (features.length > 0) {
+        if (fitToExtent) {
+            const extent = trackSource.getExtent();
+            map.getView().fit(extent, { padding: [50, 50, 50, 50] });
+        } else {
+            // Restore the previous view position
+            if (currentCenter && currentZoom) {
+                map.getView().setCenter(currentCenter);
+                map.getView().setZoom(currentZoom);
+            }
+        }
+    } else {
+        document.getElementById('track-legend').innerHTML = '<small class="text-danger">Failed to load tracks</small>';
+    }
+}
+
+// Track if this is the initial load
+let isInitialLoad = true;
+
+// Load tracks on page load
+loadEventTracks(true);  // Fit to extent on initial load
+
+// Track if playback was auto-paused due to user interaction
+let wasAutoPaused = false;
+let interactionResumeTimeout = null;
+
+// Edit mode state
+let editMode = false;
+let selectedRecordingIds = new Set(); // Track which recordings are selected for cropping
+let processingCropIds = []; // Track IDs of recordings being processed
+let cropStatusPollInterval = null;
+
+// Pause playback when user starts interacting with the map
+function pausePlaybackForInteraction() {
+    if (playbackState.isPlaying && !playbackState.isPaused) {
+        pausePlayback();
+        wasAutoPaused = true;
+    }
+}
+
+// Resume playback after user stops interacting
+function resumePlaybackAfterInteraction() {
+    if (wasAutoPaused && !playbackState.isPlaying) {
+        // Clear any existing timeout
+        if (interactionResumeTimeout) {
+            clearTimeout(interactionResumeTimeout);
+        }
+        
+        // Resume after a short delay to ensure interaction has ended
+        interactionResumeTimeout = setTimeout(function() {
+            if (wasAutoPaused && !playbackState.isPlaying && playbackState.trackData.length > 0) {
+                wasAutoPaused = false;
+                startPlayback();
+            }
+        }, 500); // Wait 500ms after interaction ends
+    }
+}
+
+// Listen for map interactions (zoom, pan, etc.)
+map.on('pointerdown', function() {
+    pausePlaybackForInteraction();
+});
+
+map.on('pointerup', function() {
+    resumePlaybackAfterInteraction();
+});
+
+// Also listen for wheel events (mouse wheel zoom)
+map.getViewport().addEventListener('wheel', function() {
+    pausePlaybackForInteraction();
+    // Clear and reset resume timeout on each wheel event
+    if (interactionResumeTimeout) {
+        clearTimeout(interactionResumeTimeout);
+    }
+    interactionResumeTimeout = setTimeout(function() {
+        resumePlaybackAfterInteraction();
+    }, 500);
+}, { passive: true });
+
+// Listen for touch events (mobile pinch zoom)
+map.getViewport().addEventListener('touchstart', function() {
+    pausePlaybackForInteraction();
+}, { passive: true });
+
+map.getViewport().addEventListener('touchend', function() {
+    resumePlaybackAfterInteraction();
+}, { passive: true });
+
+// Reload tracks when zoom changes (with debouncing)
+let lastZoomLevel = Math.round(map.getView().getZoom() || 14);
+let zoomChangeTimeout = null;
+
+map.getView().on('change:resolution', function() {
+    // Pause during zoom changes
+    pausePlaybackForInteraction();
+    
+    if (zoomChangeTimeout) {
+        clearTimeout(zoomChangeTimeout);
+    }
+    
+    zoomChangeTimeout = setTimeout(function() {
+        const newZoomLevel = Math.round(map.getView().getZoom() || 14);
+        // Only reload if zoom level changed significantly
+        const getZoomBucket = (z) => {
+            if (z <= 6) return 'z6';
+            if (z <= 10) return 'z10';
+            if (z <= 14) return 'z14';
+            if (z <= 18) return 'z18';
+            return 'raw';
+        };
+        
+        const lastBucket = getZoomBucket(lastZoomLevel);
+        const newBucket = getZoomBucket(newZoomLevel);
+        
+        if (newBucket !== lastBucket) {
+            lastZoomLevel = newZoomLevel;
+            loadEventTracks(false);  // Don't fit to extent, preserve view position
+        }
+        
+        // Resume after zoom change completes
+        resumePlaybackAfterInteraction();
+    }, 300);
+});
+
+// Edit mode functionality
+function toggleEditMode() {
+    editMode = !editMode;
+    const controls = document.getElementById('playback-controls');
+    const btn = document.getElementById('edit-tracks-btn');
+    
+    if (editMode) {
+        controls.classList.add('edit-mode');
+        btn.textContent = 'Exit Edit Mode';
+        btn.classList.add('active');
+        updateTrackSelection();
+        updateCropButtonsState();
+    } else {
+        controls.classList.remove('edit-mode');
+        btn.textContent = 'Edit Tracks';
+        btn.classList.remove('active');
+        selectedRecordingIds.clear();
+    }
+}
+
+function updateTrackSelection() {
+    const trackSelection = document.getElementById('track-selection');
+    
+    if (playbackState.trackData.length === 0) {
+        trackSelection.innerHTML = '<div class="track-selection-empty">No tracks available</div>';
+        return;
+    }
+    
+    let html = '';
+    playbackState.trackData.forEach((track, index) => {
+        const recording = recordings.find(r => r.id === track.recordingId);
+        const isChecked = selectedRecordingIds.has(track.recordingId);
+        const trackName = recording ? (recording.name || recording.vessel || 'Track') : `Track ${index + 1}`;
+        const trackColor = track.color || '#0066cc';
+        
+        html += `
+            <div class="track-selection-item">
+                <input type="checkbox" 
+                       id="track-checkbox-${track.recordingId}" 
+                       data-recording-id="${track.recordingId}"
+                       ${isChecked ? 'checked' : ''}>
+                <label for="track-checkbox-${track.recordingId}">
+                    <span class="track-selection-color" style="background-color: ${trackColor};"></span>
+                    <span>${trackName}</span>
+                </label>
+            </div>
+        `;
+    });
+    
+    trackSelection.innerHTML = html;
+    
+    // Add event listeners to checkboxes
+    trackSelection.querySelectorAll('input[type="checkbox"]').forEach(checkbox => {
+        checkbox.addEventListener('change', function() {
+            const recordingId = this.getAttribute('data-recording-id');
+            if (this.checked) {
+                selectedRecordingIds.add(recordingId);
+            } else {
+                selectedRecordingIds.delete(recordingId);
+            }
+            updateCropButtonsState();
+        });
+    });
+}
+
+function updateCropButtonsState() {
+    const cropBeforeBtn = document.getElementById('crop-before-btn');
+    const cropAfterBtn = document.getElementById('crop-after-btn');
+    const removeBtn = document.getElementById('remove-from-event-btn');
+    
+    if (!editMode || !playbackState.startTimestamp || !playbackState.endTimestamp || selectedRecordingIds.size === 0) {
+        cropBeforeBtn.disabled = true;
+        cropAfterBtn.disabled = true;
+        if (removeBtn) removeBtn.disabled = true;
+        return;
+    }
+    
+    const totalDuration = playbackState.endTimestamp - playbackState.startTimestamp;
+    const currentTime = playbackState.currentTime;
+    
+    // Enable crop buttons based on current time position and selection
+    cropBeforeBtn.disabled = currentTime <= 0 || selectedRecordingIds.size === 0;
+    cropAfterBtn.disabled = currentTime >= totalDuration || selectedRecordingIds.size === 0;
+    
+    // Enable remove button if tracks are selected (only in event context)
+    if (removeBtn) {
+        removeBtn.disabled = selectedRecordingIds.size === 0;
+    }
+}
+
+// Update crop buttons when playback time changes
+const originalUpdatePlaybackTimeDisplay = updatePlaybackTimeDisplay;
+updatePlaybackTimeDisplay = function() {
+    originalUpdatePlaybackTimeDisplay();
+    if (editMode) {
+        updateCropButtonsState();
+    }
+};
+
+// Setup edit tracks button
+document.getElementById('edit-tracks-btn').addEventListener('click', toggleEditMode);
+
+// Crop functionality
+async function cropTrack(cropBefore) {
+    if (selectedRecordingIds.size === 0) {
+        alert('Please select at least one track to crop');
+        return;
+    }
+    
+    const currentTime = playbackState.currentTime;
+    if (currentTime <= 0 && cropBefore) {
+        alert('Cannot crop before start time');
+        return;
+    }
+    
+    const totalDuration = playbackState.endTimestamp - playbackState.startTimestamp;
+    if (currentTime >= totalDuration && !cropBefore) {
+        alert('Cannot crop after end time');
+        return;
+    }
+    
+    // Show confirmation
+    const action = cropBefore ? 'before' : 'after';
+    const trackCount = selectedRecordingIds.size;
+    const trackText = trackCount === 1 ? 'track' : 'tracks';
+    const confirmMsg = `Crop ${trackCount} ${trackText} ${action} current time? This will create new cropped versions of the selected tracks.`;
+    if (!confirm(confirmMsg)) {
+        return;
+    }
+    
+    // Determine context
+    // Note: event_id will be determined from the original recording in the API
+    const context = eventToken ? 'event' : 'recording';
+    
+    // Show processing indicator
+    const processingIndicator = document.getElementById('processing-indicator');
+    const processingMessage = document.getElementById('processing-message');
+    processingIndicator.classList.add('active');
+    processingMessage.textContent = `Processing ${trackCount} crop${trackCount > 1 ? 's' : ''}...`;
+    
+    // Disable crop buttons
+    document.getElementById('crop-before-btn').disabled = true;
+    document.getElementById('crop-after-btn').disabled = true;
+    
+    // Crop all selected tracks
+    const cropPromises = Array.from(selectedRecordingIds).map(async (recordingId) => {
+        try {
+            const response = await fetch(`/api/recordings/${recordingId}/crop/`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': getCookie('csrftoken'),
+                },
+                body: JSON.stringify({
+                    crop_before: cropBefore,
+                    crop_after: !cropBefore,
+                    current_time: currentTime,
+                    context: context,
+                }),
+            });
+            
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.error || 'Failed to crop track');
+            }
+            
+            const data = await response.json();
+            return data.cropped_recording_id;
+        } catch (error) {
+            console.error(`Crop error for ${recordingId}:`, error);
+            throw error;
+        }
+    });
+    
+    try {
+        const croppedIds = await Promise.all(cropPromises);
+        processingCropIds = croppedIds;
+        processingMessage.textContent = `Processing ${croppedIds.length} crop${croppedIds.length > 1 ? 's' : ''}...`;
+        
+        // Start polling for status of all crops
+        startCropStatusPolling(croppedIds);
+        
+    } catch (error) {
+        console.error('Crop error:', error);
+        alert(`Failed to crop tracks: ${error.message}`);
+        processingIndicator.classList.remove('active');
+        updateCropButtonsState();
+    }
+}
+
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
+
+function startCropStatusPolling(recordingIds) {
+    // Clear any existing polling
+    if (cropStatusPollInterval) {
+        clearInterval(cropStatusPollInterval);
+    }
+    
+    const processingIndicator = document.getElementById('processing-indicator');
+    const processingMessage = document.getElementById('processing-message');
+    const remainingIds = new Set(recordingIds);
+    const failedIds = [];
+    
+    // Poll every 3 seconds
+    cropStatusPollInterval = setInterval(async () => {
+        if (remainingIds.size === 0) {
+            // All crops are complete
+            clearInterval(cropStatusPollInterval);
+            cropStatusPollInterval = null;
+            
+            processingIndicator.classList.remove('active');
+            
+            // Exit edit mode
+            if (editMode) {
+                toggleEditMode();
+            }
+            
+            // Show success message and refresh page
+            if (failedIds.length > 0) {
+                const message = `${recordingIds.length - failedIds.length} track(s) cropped successfully. ${failedIds.length} failed. Refreshing page...`;
+                alert(message);
+            } else {
+                alert(`${recordingIds.length} track(s) cropped successfully! Refreshing page...`);
+            }
+            
+            // Refresh the page to ensure everything is in sync
+            window.location.reload();
+            
+            return;
+        }
+        
+        // Check status of all remaining crops
+        const checkPromises = Array.from(remainingIds).map(async (recordingId) => {
+            try {
+                const response = await fetch(`/api/recordings/${recordingId}/status/`);
+                if (!response.ok) {
+                    throw new Error('Failed to check status');
+                }
+                
+                const data = await response.json();
+                return { recordingId, status: data.status, error: data.error_message };
+            } catch (error) {
+                console.error(`Status polling error for ${recordingId}:`, error);
+                return { recordingId, status: 'processing', error: null };
+            }
+        });
+        
+        const results = await Promise.all(checkPromises);
+        
+        // Process results
+        results.forEach(({ recordingId, status, error }) => {
+            if (status === 'ready') {
+                remainingIds.delete(recordingId);
+            } else if (status === 'failed') {
+                remainingIds.delete(recordingId);
+                failedIds.push({ recordingId, error });
+            }
+        });
+        
+        // Update processing message
+        const completed = recordingIds.length - remainingIds.size;
+        const total = recordingIds.length;
+        processingMessage.textContent = `Processing crops... ${completed}/${total} complete`;
+        
+    }, 3000);
+}
+
+// Setup crop buttons
+document.getElementById('crop-before-btn').addEventListener('click', () => cropTrack(true));
+document.getElementById('crop-after-btn').addEventListener('click', () => cropTrack(false));
+
+// Remove from event functionality
+async function removeFromEvent() {
+    if (selectedRecordingIds.size === 0) {
+        alert('Please select at least one track to remove');
+        return;
+    }
+    
+    const trackCount = selectedRecordingIds.size;
+    const trackText = trackCount === 1 ? 'track' : 'tracks';
+    const confirmMsg = `Remove ${trackCount} ${trackText} from this event? The tracks will not be deleted, only removed from the event.`;
+    if (!confirm(confirmMsg)) {
+        return;
+    }
+    
+    // Remove all selected tracks from event
+    const removePromises = Array.from(selectedRecordingIds).map(async (recordingId) => {
+        try {
+            const response = await fetch(`/api/recordings/${recordingId}/remove_from_event/`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': getCookie('csrftoken'),
+                },
+            });
+            
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.error || 'Failed to remove track from event');
+            }
+            
+            return { recordingId, success: true };
+        } catch (error) {
+            console.error(`Remove error for ${recordingId}:`, error);
+            return { recordingId, success: false, error: error.message };
+        }
+    });
+    
+    const results = await Promise.all(removePromises);
+    const successful = results.filter(r => r.success).length;
+    const failed = results.filter(r => !r.success);
+    
+    if (failed.length > 0) {
+        alert(`${successful} track(s) removed successfully. ${failed.length} failed. Refreshing page...`);
+    } else {
+        alert(`${successful} track(s) removed from event successfully! Refreshing page...`);
+    }
+    
+    // Clear selection
+    selectedRecordingIds.clear();
+    if (editMode) {
+        toggleEditMode();
+    }
+    
+    // Refresh the page to ensure everything is in sync
+    window.location.reload();
+}
+
+// Setup remove button (only exists in event context)
+const removeBtn = document.getElementById('remove-from-event-btn');
+if (removeBtn) {
+    removeBtn.addEventListener('click', removeFromEvent);
+}
+
+// Update crop buttons when time slider changes
+timeSlider.addEventListener('input', function() {
+    if (editMode) {
+        updateCropButtonsState();
+    }
+});
+
+// Page header accordion toggle (mobile only)
+const pageHeaderAccordion = document.getElementById('page-header-accordion');
+if (pageHeaderAccordion) {
+    const collapsedHeader = pageHeaderAccordion.querySelector('.page-header-collapsed');
+    if (collapsedHeader) {
+        collapsedHeader.addEventListener('click', function() {
+            pageHeaderAccordion.classList.toggle('expanded');
+        });
+    }
+}
+</script>
+{% endblock %}
